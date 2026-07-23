@@ -5,7 +5,6 @@
 @author Seppe Staelens
 """
 
-# -------- INITIALS -------- #
 import sys
 import os
 from pathlib import Path
@@ -58,7 +57,10 @@ def simulate(metallicity: str) -> None:
     """
     # create the simulation from the parameter file
     model = sm.SimModel(input_file=param_file, metallicity=metallicity)
-
+    population_file = Path(model.population_file_name)
+    if not population_file.exists():
+        print(f"File {population_file} does not exist. Skipping.")
+        return
     # population data
     population = pd.read_csv(model.population_file_name, sep=",")
 
@@ -89,14 +91,18 @@ def main() -> None:
     cp.read(param_file)
     loop = cp.getboolean("physics", "loop_over_metallicity", fallback=False)
     if loop:
-        metallicities = ["z0001", "z001", "z005", "z01", "z02", "z03"]
+        metallicities = ["z0001", "z0005", "z001", "z005", "z01", "z02", "z03"]
         for i, metallicity in enumerate(metallicities):
             print(
                 "--- Running metallicity "
                 + metallicity
                 + f", which is run {i+1}/{len(metallicities)} ---"
             )
-            simulate(metallicity=metallicity)
+            try:
+                simulate(metallicity=metallicity)
+            except ValueError as e:
+                print(f"!!! Skipping {metallicity} because: {e} !!!")
+                continue
     else:
         metallicity = cp.get("physics", "metallicity", fallback="z02")
         simulate(metallicity=metallicity)

@@ -1,7 +1,9 @@
 name: WD_GWB
 channels:
+  - conda-forge
   - defaults
 dependencies:
+  - python
   - astropy
   - pandas
   - matplotlib
@@ -9,4 +11,5 @@ dependencies:
   - ipykernel
   - seaborn
   - pathlib
-prefix: /home/seppe/miniconda3/envs/WD_GWB
+  - healpy
+

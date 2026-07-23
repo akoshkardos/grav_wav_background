@@ -68,6 +68,17 @@ def Kepler(m1: float, m2: float) -> float:
     )
     return nu.value
 
+def nu_max_BH(m1: float, m2:float) -> float:
+    """!
+    @brief Calculate maximum orbital frequency of BH at ISCO interaction point for a binary with masses m1,m2.
+    @param m1: mass of the first BH in solar masses.
+    @param m2: mass of the second BH in solar masses.
+    @return the orbital frequency in Hz.
+    """
+    m = cst.M_sun * (m1 + m2)
+    eta = m1 * m2 / (m1 + m2)**2
+    nu = cst.c**3 / (2 * np.pi * cst.G * m) * (3 / (14 * eta) * (1 - np.sqrt(1 - 14 * eta / 9)))**(3 / 2)
+    return nu.value
 
 def K(M: float) -> float:
     """!

@@ -115,15 +115,21 @@ class SimModel:
         self.SFH_num = config.getint("physics", "SFH_num", fallback=1)
         if self.SFH_num != 6:
             print("SFH_num is not 6, so SFH_type and metallicity are ignored.")
-        self.SFH_type = config.get("physics", "SFH_type", fallback="MZ19")
+        self.SFH_type = config.get("physics", "SFH_type", fallback="")
+        self.object = config.get("physics", "object", fallback="WD")
         self.pop_synth = config.get("physics", "pop_synth", fallback="GammaAlpha")
         self.alpha = config.get("physics", "alpha", fallback="Alpha4")
-        self.normalisation = config.getfloat("physics", "normalisation", fallback=4e6)
+        if self.object == "BH":
+            self.normalisation = 5.4e7
+        if self.object == "WD":
+            self.normalisation = 3.4e6 #change to 4e6 for _seppe data
         self.omega_prefactor_bulk = 8.10e-9 / self.normalisation
         self.omega_prefactor_birth_merger = 1.28e-8 / self.normalisation
 
         self.population_file_name = (
             "../data/"
+            + self.object
+            + "/"
             + self.pop_synth
             + "/"
             + self.alpha

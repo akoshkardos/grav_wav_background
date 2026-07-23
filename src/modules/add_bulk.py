@@ -87,7 +87,7 @@ def add_bulk(model: sm.SimModel, data: pd.DataFrame) -> None:
                 Omega_cont *= model.z_widths[i] * (1 + z) ** (-1)
 
             Omega += Omega_cont
-            z_contr[f"freq_{j}"][i] = Omega_cont
+            z_contr.loc[i, f"freq_{j}"] = Omega_cont
 
             # the contribution to the number of systems
             pre_num = (
@@ -96,9 +96,9 @@ def add_bulk(model: sm.SimModel, data: pd.DataFrame) -> None:
                 * (cosmo.comoving_distance(z).value ** 2)
             )
             if model.INTEG_MODE == "redshift":
-                z_contr[f"freq_{j}_num"][i] = pre_num * model.z_widths[i]
+                z_contr.loc[i, f"freq_{j}_num"] = pre_num * model.z_widths[i]
             elif model.INTEG_MODE == "time":
-                z_contr[f"freq_{j}_num"][i] = (
+                z_contr.loc[i, f"freq_{j}_num"] = (
                     pre_num * model.light_speed * (1 + z) * model.dT
                 )
 
@@ -115,7 +115,7 @@ def add_bulk(model: sm.SimModel, data: pd.DataFrame) -> None:
             model.f_plot,
             Omega_plot,
             model.SAVE_FIG,
-            f"GWB_SFH{model.SFH_num}_{model.N_freq}_{model.N_int}_{model.tag}",
+            f"GWB_SFH{model.SFH_num}{model.SFH_type}_{model.N_freq}_{model.N_int}_{model.tag}_{model.object}"
         )
 
     # Save GWB
@@ -123,14 +123,14 @@ def add_bulk(model: sm.SimModel, data: pd.DataFrame) -> None:
     GWB.to_csv(
         Path(
             model.output_path
-            + f"SFH{model.SFH_num}_{model.N_freq}_{model.N_int}_{model.metallicity}_{model.tag}.txt"
+            + f"SFH{model.SFH_num}{model.SFH_type}_{model.N_freq}_{model.N_int}_{model.metallicity}_{model.tag}_{model.object}.txt"
         ),
         index=False,
     )
     z_contr.to_csv(
         Path(
             model.output_path
-            + f"SFH{model.SFH_num}_{model.N_freq}_{model.N_int}_{model.metallicity}_z_contr_{model.tag}.txt"
+            + f"SFH{model.SFH_num}{model.SFH_type}_{model.N_freq}_{model.N_int}_{model.metallicity}_z_contr_{model.tag}_{model.object}.txt"
         ),
         index=False,
     )

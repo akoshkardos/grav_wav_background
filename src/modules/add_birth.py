@@ -27,11 +27,11 @@ def add_birth(model: sm.SimModel, data: pd.DataFrame) -> None:
     previous_Omega = pd.read_csv(
         Path(
             model.output_path
-            + f"SFH{model.SFH_num}_{model.N_freq}_{model.N_int}_{model.metallicity}_{model.tag}.txt"
+            + f"SFH{model.SFH_num}{model.SFH_type}_{model.N_freq}_{model.N_int}_{model.metallicity}_{model.tag}_{model.object}.txt"
         ),
         sep=",",
     )
-    Omega_plot = previous_Omega.Om.values
+    Omega_plot = previous_Omega.Om.values.copy()
 
     # Create dataframe to store results
     z_contr = pd.DataFrame({"z": model.z_list})
@@ -112,20 +112,20 @@ def add_birth(model: sm.SimModel, data: pd.DataFrame) -> None:
             num_syst = psi * tau_in_bin * 10**6  # tau is given in Myr, psi in ... /yr
 
             if model.INTEG_MODE == "redshift":
-                z_contr[f"freq_{bin_index}"][i] += Omega_cont / (
+                z_contr.loc[i, f"freq_{bin_index}"] += Omega_cont / (
                     model.omega_prefactor_bulk * model.f_bin_factors[bin_index]
                 )  # The denominator is to keep the relative size wrt the bulk
-                z_contr[f"freq_{bin_index}_num"][i] += (
+                z_contr.loc[i, f"freq_{bin_index}_num"] += (
                     (4 * np.pi / model.normalisation)
                     * num_syst
                     * (cosmo.comoving_distance(z).value ** 2)
                     * model.z_widths[i]
                 )
             elif model.INTEG_MODE == "time":
-                z_contr[f"freq_{bin_index}"][i] += (
+                z_contr.loc[i, f"freq_{bin_index}"] += (
                     Omega_cont / model.f_bin_factors[bin_index]
                 )  # The denominator is to keep the relative size wrt the bulk
-                z_contr[f"freq_{bin_index}_num"][i] += (
+                z_contr.loc[i, f"freq_{bin_index}_num"] += (
                     (4 * np.pi / model.normalisation)
                     * num_syst
                     * (cosmo.comoving_distance(z).value ** 2)
@@ -147,7 +147,7 @@ def add_birth(model: sm.SimModel, data: pd.DataFrame) -> None:
             model.f_plot,
             Omega_plot,
             model.SAVE_FIG,
-            f"GWB_SFH{model.SFH_num}_{model.N_freq}_{model.N_int}_wbirth_{model.tag}",
+            f"GWB_SFH{model.SFH_num}{model.SFH_type}_{model.N_freq}_{model.N_int}_wbirth_{model.tag}_{model.object}"
         )
 
     # Save GWB
@@ -155,14 +155,14 @@ def add_birth(model: sm.SimModel, data: pd.DataFrame) -> None:
     GWBnew.to_csv(
         Path(
             model.output_path
-            + f"SFH{model.SFH_num}_{model.N_freq}_{model.N_int}_{model.metallicity}_wbirth_{model.tag}.txt"
+            + f"SFH{model.SFH_num}{model.SFH_type}_{model.N_freq}_{model.N_int}_{model.metallicity}_wbirth_{model.tag}_{model.object}.txt"
         ),
         index=False,
     )
     z_contr.to_csv(
         Path(
             model.output_path
-            + f"SFH{model.SFH_num}_{model.N_freq}_{model.N_int}_{model.metallicity}_z_contr_birth_{model.tag}.txt"
+            + f"SFH{model.SFH_num}{model.SFH_type}_{model.N_freq}_{model.N_int}_{model.metallicity}_z_contr_birth_{model.tag}_{model.object}.txt"
         ),
         index=False,
     )

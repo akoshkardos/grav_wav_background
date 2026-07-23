@@ -65,7 +65,7 @@ class SFRInterpolator:
 
         elif SFH_num == 6:
             SFR_at_val_data = pd.read_csv(
-                Path(f"../data/SFRD/{SFH_type}_SFRD_allbins.txt")
+                Path(f"../data/SFRD/{SFH_type}_SFRD_allbins.txt.gz")
             )
             # the order is reversed to be in ascending order, compatible with numpy.interp
             self.interp_z = SFR_at_val_data.redshift.values[::-1]
