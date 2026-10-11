@@ -17,8 +17,8 @@ jobs:
         uses: conda-incubator/setup-miniconda@v3
         with:
           miniforge-variant: Miniforge3
-          environment-file: WD_GWB.yml
-          activate-environment: WD_GWB
+          environment-file: WDBH_GWB.yml
+          activate-environment: WDBH_GWB
           auto-activate-base: false
 
       - name: Run small-sample end-to-end checks
