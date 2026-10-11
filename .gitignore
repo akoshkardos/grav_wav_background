@@ -5,6 +5,7 @@ doc/latex/*
 !doc/latex/refman.pdf
 data/**/*.txt
 data/z_at_age.txt
+!data/ET.txt
 post_proc/old.ipynb
 post_proc/test.ipynb
 testing/*
