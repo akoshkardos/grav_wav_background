@@ -1,27 +1,28 @@
-"""!@file Data_visualisation.py
+"""!
+@file Data_visualisation.py
 @date 2026-03-18
-@brief This program makes the GWB, frequency and redshift distribution, and redshift contribution to the GWB plots and gives a summary of the calculated data.
-@details Produces four diagnostic outputs for the GWB: a metallicity spectrum plot with detector sensitivity curves, a stacked bar chart of redshift contributions per frequency bin, frequency and redshift distribution histograms of binary system counts, and a printed system count summary. Also had special handling for previously calculated SN24 and HN24 datasets.
+@brief Plot and summarize calculated gravitational-wave background results.
+@details Produces spectrum plots, redshift-contribution charts, frequency and
+redshift system-count distributions, and system-count summaries. Supports the
+SN24 and HN24 example datasets.
 @author Ákosh Kardos
 """
 
-import numpy as np
-import matplotlib.pyplot as plt
-import pandas as pd
 import configparser as cfg
-import sys
 import os
-import matplotlib.cm as cm
-import matplotlib as mpl
+import sys
 from pathlib import Path
+from typing import Union
 
-from astropy import units as u
-from astropy import constants as cst
-from astropy.cosmology import Planck18 as cosmo
-from astropy.cosmology import z_at_value
-
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 import seaborn as sns
 import schnell as snl
+from astropy import units as u
+from astropy.cosmology import Planck18 as cosmo
+from astropy.cosmology import z_at_value
 
 # matplotlib globals
 plt.rc('font',   size=12)      # controls default text sizes
@@ -33,42 +34,23 @@ plt.rc('legend', fontsize=14) # legend fontsize
 plt.rc('figure', titlesize=14) # fontsize of the figure title
 
 # LVK O3, alpha = 2/3 at 25 Hz
-Omega_upp = 2.9e-9
-Omega_BBH = 0.8e-9
-Omega_BNS = 3.6e-11
+OMEGA_UPPER = 2.9e-9
+OMEGA_BBH = 0.8e-9
+OMEGA_BNS = 3.6e-11
 
-Omega_BBH_up  = 1.9e-9
-Omega_BNS_up  = 1.0e-10
-Omega_BBH_low = 0.3e-9
-Omega_BNS_low = 0.8e-11
+OMEGA_BBH_UP  = 1.9e-9
+OMEGA_BNS_UP  = 1.0e-10
+OMEGA_BBH_LOW = 0.3e-9
+OMEGA_BNS_LOW = 0.8e-11
 
-def calc_parabola_vertex(x1: float, y1: float,
-                         x2: float, y2: float,
-                         x3: float, y3: float) -> tuple:
-    """
-    Calculate the coefficients of a parabola given 3 points.
-    """
-    denom = (x1 - x2) * (x1 - x3) * (x2 - x3)
+# --- Plotting and spectrum helpers ---
 
-    A = (x3 * (y2 - y1) +
-         x2 * (y1 - y3) +
-         x1 * (y3 - y2)) / denom
-
-    B = (x3**2 * (y1 - y2) +
-         x2**2 * (y3 - y1) +
-         x1**2 * (y2 - y3)) / denom
-
-    C = (x2 * x3 * (x2 - x3) * y1 +
-         x3 * x1 * (x3 - x1) * y2 +
-         x1 * x2 * (x1 - x2) * y3) / denom
-
-    return A, B, C
-
-
-def LISA_PI_curve(t_obs: float = 4):
-    """
-    LISA PI curve for a given observation time (years).
-    Script by Gijs Nelemans.
+def lisa_pi_curve(t_obs: float = 4):
+    """!
+    @brief Build a callable for the LISA power-law-integrated sensitivity curve.
+    @param t_obs: Observation time in years; defaults to 4.
+    @return Function that accepts frequencies in Hz and returns the PI curve.
+    @details Based on a script by Gijs Nelemans.
     """
 
     f_ref = 1e-2
@@ -80,7 +62,7 @@ def LISA_PI_curve(t_obs: float = 4):
 
     obs_time = t_obs * 365 * 24 * 3600
 
-    def get_Omega_LISA(freqs):
+    def get_omega_lisa(freqs):
         pi_LISA = mc.get_pi_curve(
             obs_time,
             freqs,
@@ -91,13 +73,15 @@ def LISA_PI_curve(t_obs: float = 4):
         )
         return pi_LISA
 
-    return get_Omega_LISA
+    return get_omega_lisa
 
 
-def ET_PI_curve(t_obs: float = 4):
-    """
-    Einstein Telescope PI curve for a given observation time (years).
-    Uses the ET-D sum sensitivity.
+def et_pi_curve(t_obs: float = 4):
+    """!
+    @brief Build a callable for the Einstein Telescope PI sensitivity curve.
+    @param t_obs: Observation time in years; defaults to 4.
+    @return Function that accepts frequencies in Hz and returns the PI curve.
+    @details Uses the ET-D sum sensitivity and ../data/ET.txt.
     """
 
     path = f"../data/ET.txt"
@@ -105,12 +89,17 @@ def ET_PI_curve(t_obs: float = 4):
     f_ref = 63.
     nside = 1
 
-    et_dets = [snl.GroundDetectorTriangle(name='ET%d'%i, lat=40.1, lon=9.0, fname_psd=path, detector_id=i) for i in range(3)]
+    et_dets = [
+        snl.GroundDetectorTriangle(
+            name=f"ET{i}", lat=40.1, lon=9.0, fname_psd=path, detector_id=i
+        )
+        for i in range(3)
+    ]
 
     mc_ET = snl.MapCalculator(et_dets, f_pivot=f_ref, spectral_index=2./3.)
     obs_time = t_obs * 365 * 24 * 3600
 
-    def get_Omega_ET(freqs):
+    def get_omega_et(freqs):
         pi_ET = mc_ET.get_pi_curve(
             obs_time,
             freqs,
@@ -120,49 +109,83 @@ def ET_PI_curve(t_obs: float = 4):
         )
         return pi_ET
 
-    return get_Omega_ET
+    return get_omega_et
 
 
-def get_z_list_bins_from_time(max_z: float, N_int: int) -> tuple:
+def get_z_list_bins_from_time(max_z: float, n_int: int) -> tuple:
+    """!
+    @brief Convert uniform lookback-time samples and edges to redshift.
+    @param max_z: Maximum redshift defining the lookback-time range.
+    @param n_int: Number of integration intervals.
+    @return Pair of redshift sample points and bin edges.
     """
-    Get redshift lists and bins from lookback time.
-    """
 
-    T0 = cosmo.lookback_time(max_z)
-    T_range = np.linspace(0, T0.value, 2 * N_int + 1)
+    max_lookback_time = cosmo.lookback_time(max_z)
+    t_range = np.linspace(0, max_lookback_time.value, 2 * n_int + 1)
 
-    T_list = np.array([T_range[2 * i + 1] for i in range(N_int)])
-    T_bins = np.array([T_range[2 * i] for i in range(N_int + 1)])
+    t_list = np.array([t_range[2 * i + 1] for i in range(n_int)])
+    t_bins = np.array([t_range[2 * i] for i in range(n_int + 1)])
 
     z_list = []
     z_bins = []
 
-    for time in T_list:
+    for time in t_list:
         z_list.append(z_at_value(cosmo.lookback_time, time * u.Gyr).value)
 
-    for time in T_bins[1:]:
+    for time in t_bins[1:]:
         z_bins.append(z_at_value(cosmo.lookback_time, time * u.Gyr).value)
 
     return z_list, z_bins
 
 
-def Omega(Omega_ref: float, f_ref: float, freq: np.ndarray) -> np.ndarray:
+def omega(omega_ref: float, f_ref: float, freq: np.ndarray) -> np.ndarray:
+    """!
+    @brief Evaluate a spectrum normalized to omega_ref at f_ref with slope 2/3.
+    @param omega_ref: Spectrum value at the reference frequency.
+    @param f_ref: Reference frequency in Hz.
+    @param freq: Frequencies in Hz.
+    @return Spectrum values at freq.
     """
-    Create an f^(2/3) spectrum.
-    """
-    return Omega_ref * (freq / f_ref)**(2/3)
+    return omega_ref * (freq / f_ref)**(2/3)
 
 
 def parabola(freq: np.ndarray, a: float, b: float, c: float) -> np.ndarray:
-    """
-    Parabola function.
+    """!
+    @brief Evaluate a quadratic polynomial.
+    @param freq: x values at which to evaluate the polynomial.
+    @param a: Quadratic coefficient.
+    @param b: Linear coefficient.
+    @param c: Constant coefficient.
+    @return Polynomial values at freq.
     """
     return a * freq**2 + b * freq + c
 
 
-def load_data(SFH: int, SFH_type: str, N_freq: int, N_int: int, tag: str, metallicity: any, object: str, subfolder: str = "", include_num: bool = True):
-    """
-    Helper to load and sum d1, d2, d3 DataFrames across one or multiple metallicities.
+def load_data(
+    sfh: int,
+    sfh_type: str,
+    n_freq: int,
+    n_int: int,
+    tag: str,
+    metallicity: Union[str, list[str]],
+    compact_object: str,
+    subfolder: str = "",
+    include_num: bool = True,
+):
+    """!
+    @brief Load contribution tables and optionally combine metallicities.
+    @param sfh: Numeric star-formation-history selector.
+    @param sfh_type: Tabulated history label, if used.
+    @param n_freq: Number of frequency bins in the output files.
+    @param n_int: Number of integration bins in the output files.
+    @param tag: Output run tag.
+    @param metallicity: One metallicity key or a sequence of keys.
+    @param compact_object: Population type label, such as WD or BH.
+    @param subfolder: Output subfolder or legacy dataset selector (SN24/HN24).
+    @param include_num: Sum number-count columns when combining datasets;
+    otherwise sum frequency-contribution columns.
+    @return Three dataframes for bulk, birth, and merger contributions, or
+    (None, None, None) if no matching files were found.
     """
     z_list = [metallicity] if isinstance(metallicity, str) else metallicity
     d1_total, d2_total, d3_total = None, None, None
@@ -180,10 +203,13 @@ def load_data(SFH: int, SFH_type: str, N_freq: int, N_int: int, tag: str, metall
                 d2 = pd.read_csv(f"{path_base}_birth_example_HN24.txt.gz")
                 d3 = pd.read_csv(f"{path_base}_merge_example_HN24.txt.gz")
             else:
-                path_base = f"../output/GWBs{subfolder}/SFH{SFH}{SFH_type}_{N_freq}_{N_int}_{z}_z_contr"
-                d1 = pd.read_csv(f"{path_base}_{tag}_{object}.txt")
-                d2 = pd.read_csv(f"{path_base}_birth_{tag}_{object}.txt")
-                d3 = pd.read_csv(f"{path_base}_merge_{tag}_{object}.txt")
+                path_base = (
+                    f"../output/GWBs{subfolder}/SFH{sfh}{sfh_type}_"
+                    f"{n_freq}_{n_int}_{z}_z_contr"
+                )
+                d1 = pd.read_csv(f"{path_base}_{tag}_{compact_object}.txt")
+                d2 = pd.read_csv(f"{path_base}_birth_{tag}_{compact_object}.txt")
+                d3 = pd.read_csv(f"{path_base}_merge_{tag}_{compact_object}.txt")
 
             if d1_total is None:
                 d1_total, d2_total, d3_total = d1.copy(), d2.copy(), d3.copy()
@@ -207,26 +233,40 @@ def load_data(SFH: int, SFH_type: str, N_freq: int, N_int: int, tag: str, metall
     return d1_total, d2_total, d3_total
 
 
+# --- Spectrum and contribution visualizations ---
+
 def multiplot(
-    SFH: int,
-    SFH_type: str,
-    N_freq: int,
-    N_int: int,
+    sfh: int,
+    sfh_type: str,
+    n_freq: int,
+    n_int: int,
     tag: str,
-    object: str,
+    compact_object: str,
     save: bool = False,
     save_name = "",
     compare: bool = False,
     z_list: list[str] = ["z0001", "z0005", "z001", "z005", "z01", "z02", "z03"],
     subfolder: str = ""
 ) -> None:
+    """!
+    @brief Plot GWB spectra for selected metallicities with detector curves.
+    @param sfh: Numeric star-formation-history selector.
+    @param sfh_type: Tabulated history label, if used.
+    @param n_freq: Number of frequency bins represented by the spectra.
+    @param n_int: Number of integration bins represented by the spectra.
+    @param tag: Output run tag.
+    @param compact_object: Population type label, such as WD or BH.
+    @param save: Save the figure when true.
+    @param save_name: Text included in the saved figure filename.
+    @param compare: Include a comparison spectrum for the other population type.
+    @param z_list: Metallicities whose spectra are plotted.
+    @param subfolder: Output subfolder or legacy dataset selector (SN24/HN24).
+    @details Displays the figure and saves it under ../output/Figures when save is true.
+    """
 
+    get_omega_lisa = lisa_pi_curve(t_obs=4)
 
-    a, b, c = calc_parabola_vertex(-3, -12, -2.5, -12.5, -2, -12)
-
-    get_Omega_LISA = LISA_PI_curve(t_obs=4)
-
-    get_Omega_ET = ET_PI_curve(t_obs=4)
+    get_omega_et = et_pi_curve(t_obs=4)
 
     # DECIGO Data
     logf1_DeciCon10, logpi_DeciCon10 = np.loadtxt(f"../data/DeciCon10.dat").transpose()
@@ -234,8 +274,6 @@ def multiplot(
     fig, ax = plt.subplots(figsize=(8, 6))
 
     metal_colors = ["#f0b990", "#eda070", "#ea8a55", "#e67840", "#e36830", "#df5820", "#db4810"]
-    n_colors = max(len(z_list), len(metal_colors))
-
     total_data = None
 
     for i, z in enumerate(z_list):
@@ -249,13 +287,16 @@ def multiplot(
             break
         elif subfolder == "HN24":
             path = f"../output/GWBs/{subfolder}/SFH6_50_20_{z}_wmerge_example_HN24.txt.gz"
-            SFH = 6
+            sfh = 6
             compare = False
         else:
-            path = f"../output/GWBs/SFH{SFH}{SFH_type}_{N_freq}_{N_int}_{z}_wmerge_{tag}_{object}.txt"
+            path = (
+                f"../output/GWBs/SFH{sfh}{sfh_type}_{n_freq}_{n_int}_{z}_"
+                f"wmerge_{tag}_{compact_object}.txt"
+            )
         try:
             data = pd.read_csv(path)
-            if SFH == 6:
+            if sfh == 6:
                 if total_data is None:
                     total_data = data.copy()
                 else:
@@ -270,7 +311,7 @@ def multiplot(
         except Exception as e:
             print(f"Failed to load z={z}. Error was: {type(e).__name__}: {e}")
 
-    if SFH == 6 and total_data is not None:
+    if sfh == 6 and total_data is not None:
         ax.plot(total_data.f, total_data.Om,
                 color="#E8622A",
                 linewidth=3.0,
@@ -278,19 +319,35 @@ def multiplot(
                 label="Total GWB")
 
     compare_data = None
-    if object == "BH":
+    if compact_object == "BH":
         log_f_high = 3.5 ; log_f_low = -6 ; comp_obj = "WD"
         if compare:
-            path = f"../output/GWBs/SFH{SFH}{SFH_type}_{N_freq}_{N_int}_z01_wmerge_{tag}_WD.txt"
-            if not os.path.exists(path): path = f"../output/GWBs/SFH{SFH}{SFH_type}_50_{N_int}_z01_wmerge_{tag}_WD.txt"
-            if not os.path.exists(path): raise FileNotFoundError(f"WD run with configs {tag}, SFH{SFH} and N_freq=50 hasn't been done for middle z(01).")
+            path = f"../output/GWBs/SFH{sfh}{sfh_type}_{n_freq}_{n_int}_z01_wmerge_{tag}_WD.txt"
+            if not os.path.exists(path):
+                path = (
+                    f"../output/GWBs/SFH{sfh}{sfh_type}_50_{n_int}_"
+                    f"z01_wmerge_{tag}_WD.txt"
+                )
+            if not os.path.exists(path):
+                raise FileNotFoundError(
+                    f"WD run with configs {tag}, SFH{sfh}, and n_freq=50 "
+                    "hasn't been done for middle z(01)."
+                )
             compare_data = pd.read_csv(path)
     else:
         log_f_high = 0 ; log_f_low = -5 ; comp_obj = "BH"
         if compare:
-            path = f"../output/GWBs/SFH{SFH}{SFH_type}_100_{N_int}_z001_wmerge_{tag}_BH.txt"
-            if not os.path.exists(path): path = f"../output/GWBs/SFH{SFH}{SFH_type}_{N_freq}_{N_int}_z001_wmerge_{tag}_BH.txt"
-            if not os.path.exists(path): raise FileNotFoundError(f"BH run with configs {tag}, SFH{SFH} and N_freq=100 hasn't been done for middle z(001).")
+            path = f"../output/GWBs/SFH{sfh}{sfh_type}_100_{n_int}_z001_wmerge_{tag}_BH.txt"
+            if not os.path.exists(path):
+                path = (
+                    f"../output/GWBs/SFH{sfh}{sfh_type}_{n_freq}_{n_int}_"
+                    f"z001_wmerge_{tag}_BH.txt"
+                )
+            if not os.path.exists(path):
+                raise FileNotFoundError(
+                    f"BH run with configs {tag}, SFH{sfh}, and n_freq=100 "
+                    "hasn't been done for middle z(001)."
+                )
             compare_data = pd.read_csv(path)
 
     if compare_data is not None:
@@ -301,27 +358,26 @@ def multiplot(
     freq = np.logspace(log_f_low - 0.1, log_f_high + 0.1, 1000)
 
 
-    ax.plot(freq, Omega(Omega_upp, 25, freq),
+    ax.plot(freq, omega(OMEGA_UPPER, 25, freq),
             linestyle="-", color="#B8D4E8", linewidth=0.9,
             label="LVK Upper Limit", zorder=1)
-    ax.plot(freq, Omega(Omega_BBH, 25, freq),
+    ax.plot(freq, omega(OMEGA_BBH, 25, freq),
             color="#4A7FA8", linewidth=0.9, alpha=0.8,
             label="LVK BBH", zorder=1)
-    ax.plot(freq, Omega(Omega_BNS, 25, freq),
+    ax.plot(freq, omega(OMEGA_BNS, 25, freq),
             color="#1A4F78", linewidth=0.9, alpha=0.8,
             label="LVK BNS", zorder=1)
 
-    ax.fill_between(freq, Omega(Omega_BBH_low, 25, freq), Omega(Omega_BBH_up, 25, freq),
+    ax.fill_between(freq, omega(OMEGA_BBH_LOW, 25, freq), omega(OMEGA_BBH_UP, 25, freq),
                     color="#4A7FA8", alpha=0.16, zorder=0)
-    ax.fill_between(freq, Omega(Omega_BNS_low, 25, freq), Omega(Omega_BNS_up, 25, freq),
+    ax.fill_between(freq, omega(OMEGA_BNS_LOW, 25, freq), omega(OMEGA_BNS_UP, 25, freq),
                     color="#1A4F78", alpha=0.16, zorder=0)
 
 
-    sens_color = "#CCCCCC"
-    ax.plot(freq, get_Omega_LISA(freq),
+    ax.plot(freq, get_omega_lisa(freq),
             color="#AAAAAA", linewidth=1.0, linestyle=(0, (4, 2, 1, 2)),
             label="LISA", zorder=2)
-    ax.plot(freq, get_Omega_ET(freq),
+    ax.plot(freq, get_omega_et(freq),
             color="#666666", linewidth=1.0, linestyle=(0, (4, 2, 1, 2)),
             label="ET", zorder=2)
     ax.loglog(10**logf1_DeciCon10, 10**logpi_DeciCon10,
@@ -332,7 +388,7 @@ def multiplot(
     ax.set_xscale("log")
     ax.set_yscale("log")
     ax.set_xlim(10**(log_f_low), 10**(log_f_high))
-    if compare or object == "BH":
+    if compare or compact_object == "BH":
         ax.set_ylim(1e-15, 1e-8)
     else:
         ax.set_ylim(1e-14, 1e-10)
@@ -356,33 +412,57 @@ def multiplot(
 
     if save:
         plt.tight_layout()
-        fig.savefig(f"../output/Figures/multi_{N_freq}_{N_int}_SFH{SFH}{SFH_type}_{tag}_{object}_{save_name}{subfolder}.png", dpi=300)
+        fig.savefig(
+            f"../output/Figures/multi_{n_freq}_{n_int}_SFH{sfh}{sfh_type}_"
+            f"{tag}_{compact_object}_{save_name}{subfolder}.png",
+            dpi=300,
+        )
 
     plt.show()
 
 
-def stacked_bar_chart(log_f_low, log_f_high, SFH, SFH_type, N_freq,
-                      N_int, tag, metallicity, object, integration_mode,
-                      max_z=8, SAVE=False, z_threshold=0.46, subfolder=""):
-
-    d1, d2, d3 = load_data(SFH, SFH_type, N_freq, N_int, tag, metallicity, object, subfolder, include_num=False)
+def stacked_bar_chart(log_f_low, log_f_high, sfh, sfh_type, n_freq,
+                      n_int, tag, metallicity, compact_object, integration_mode,
+                      max_z=8, save=False, z_threshold=0.46, subfolder=""):
+    """!
+    @brief Plot the fractional contribution by integration/redshift bin per frequency.
+    @param log_f_low: Base-10 logarithm of the lower frequency bound in Hz.
+    @param log_f_high: Base-10 logarithm of the upper frequency bound in Hz.
+    @param sfh: Numeric star-formation-history selector.
+    @param sfh_type: Tabulated history label, if used.
+    @param n_freq: Number of frequency bins.
+    @param n_int: Number of integration bins.
+    @param tag: Output run tag.
+    @param metallicity: One metallicity key or sequence of keys to combine.
+    @param compact_object: Population type label, such as WD or BH.
+    @param integration_mode: Either redshift or time, determining bin construction.
+    @param max_z: Maximum redshift defining the integration range.
+    @param save: Save the figure when true.
+    @param z_threshold: Redshift threshold marked on the chart.
+    @param subfolder: Output subfolder or legacy dataset selector.
+    @details Displays the stacked chart and optionally saves it under output/Figures.
+    """
+    d1, d2, d3 = load_data(
+        sfh, sfh_type, n_freq, n_int, tag, metallicity, compact_object,
+        subfolder, include_num=False,
+    )
     if d1 is None:
         print("Stacked Bar Chart: No data found.")
         return
 
-    f_range = np.logspace(log_f_low, log_f_high, 2*N_freq+1, base=10)
-    f_plot = np.log10(np.array([f_range[2*i+1] for i in range(N_freq)]))
+    f_range = np.logspace(log_f_low, log_f_high, 2*n_freq+1, base=10)
+    f_plot = np.log10(np.array([f_range[2*i+1] for i in range(n_freq)]))
 
     if integration_mode == "redshift":
-        z_bins = np.linspace(0, max_z, N_int + 1)
+        z_bins = np.linspace(0, max_z, n_int + 1)
     if integration_mode == "time":
-        _, z_bins = get_z_list_bins_from_time(max_z, N_int)
+        _, z_bins = get_z_list_bins_from_time(max_z, n_int)
 
     z_bins = np.array(z_bins)
 
 
     prop_cols = {}
-    for i in range(N_freq):
+    for i in range(n_freq):
         total_f = d1[f"freq_{i}"] + d2[f"freq_{i}"] + d3[f"freq_{i}"]
         t_sum = total_f.sum()
         prop_cols[f"prop_f_{i}"] = (99 * total_f / t_sum) if t_sum != 0 else np.zeros(len(d1))
@@ -391,7 +471,7 @@ def stacked_bar_chart(log_f_low, log_f_high, SFH, SFH_type, N_freq,
     mask = new_data.sum(axis=0).values > 0
     f_filtered = f_plot[mask]
     data_filtered = new_data.loc[:, mask]
-    rows_per_bin = len(data_filtered) // N_int
+    rows_per_bin = len(data_filtered) // n_int
 
 
     ccmap = plt.get_cmap('viridis')
@@ -410,7 +490,7 @@ def stacked_bar_chart(log_f_low, log_f_high, SFH, SFH_type, N_freq,
     draw_line = False
 
 
-    for i in range(N_int):
+    for i in range(n_int):
         start = i * rows_per_bin
         end = start + rows_per_bin
         props = data_filtered.iloc[start:end].sum().values
@@ -441,64 +521,61 @@ def stacked_bar_chart(log_f_low, log_f_high, SFH, SFH_type, N_freq,
     cbar.set_label('Redshift ($z$)')
 
     plt.tight_layout()
-    if SAVE:
+    if save:
         label = metallicity if isinstance(metallicity, str) else "all_z"
-        fig.savefig(f"../output/Figures/z_contr_{N_freq}_{N_int}_SFH{SFH}{SFH_type}_{tag}_{label}_{object}{subfolder}.png")
+        fig.savefig(
+            f"../output/Figures/z_contr_{n_freq}_{n_int}_SFH{sfh}{sfh_type}_"
+            f"{tag}_{label}_{compact_object}{subfolder}.png"
+        )
 
     plt.show()
 
-def summary(SFH: int, SFH_type: str, N_freq: int, N_int: int, tag: str, metallicity: any, object: str, subfolder: str = "") -> None:
-    '''!
-    @brief Print a summary of the number of systems in the different parts of the code.
-    @param SFH: The star formation history.
-    @param N_freq: The number of frequency bins.
-    @param N_int: The number of integration bins.
-    @param tag: The tag of the output files.
-    @param metallicity: Single string (e.g., "z02") or list of strings.
-    @param object: The object type (e.g., "BH", "WD").
-    @param subfolder: The subfolder of the output files.
-    '''
+# --- System-count summaries and distributions ---
 
-    d1, d2, d3 = load_data(SFH, SFH_type, N_freq, N_int, tag, metallicity, object, subfolder)
-
-    if d1 is None: return
-
-    totals1b = []
-    totals2b = []
-    totals3b = []
-
-    for n in range(N_freq):
-        totals1b.append(np.sum(d1[f"freq_{n}_num"]))
-        totals2b.append(np.sum(d2[f"freq_{n}_num"]))
-        totals3b.append(np.sum(d3[f"freq_{n}_num"]))
-
-    label = metallicity if isinstance(metallicity, str) else "all_z"
-
-    print(f"\n{tag}, {N_freq} bins, {label}, {object}:\n")
-
-    print(f"Total number of systems in bulk: {np.sum(np.array(totals1b)):.5E}")
-    print(f"Total number of systems in birth bins: {np.sum(np.array(totals2b)):.5E}")
-    print(f"Total number of systems in merge bins: {np.sum(np.array(totals3b)):.5E}")
-    print(f"Total number of systems in non-bulk bins: {np.sum(np.array(totals2b)) + np.sum(np.array(totals3b)):.5E}")
-
-    print(f"\nTOTAL: {np.sum(totals1b) + np.sum(totals2b) + np.sum(totals3b):.5E}")
-
-def distr_over_f(log_f_low: int, log_f_high: int, SFH: int, SFH_type: str, N_freq: int, N_int: int, tag: str, metallicity: any, object: str, SAVE_FIG: bool = False, subfolder: str = "") -> None:
-    #Handle both single string ("z02") and list (["z001", "z01"...])
-    d1, d2, d3 = load_data(SFH, SFH_type, N_freq, N_int, tag, metallicity, object, subfolder)
+def distr_over_f(
+    log_f_low: int,
+    log_f_high: int,
+    sfh: int,
+    sfh_type: str,
+    n_freq: int,
+    n_int: int,
+    tag: str,
+    metallicity: Union[str, list[str]],
+    compact_object: str,
+    save_fig: bool = False,
+    subfolder: str = "",
+) -> None:
+    """!
+    @brief Plot system counts across frequency bins for bulk, birth, merger, and total.
+    @param log_f_low: Base-10 logarithm of the lower frequency bound in Hz.
+    @param log_f_high: Base-10 logarithm of the upper frequency bound in Hz.
+    @param sfh: Numeric star-formation-history selector.
+    @param sfh_type: Tabulated history label, if used.
+    @param n_freq: Number of frequency bins.
+    @param n_int: Number of integration bins.
+    @param tag: Output run tag.
+    @param metallicity: One metallicity key or sequence of keys to combine.
+    @param compact_object: Population type label, such as WD or BH.
+    @param save_fig: Save the figure when true.
+    @param subfolder: Output subfolder or legacy dataset selector.
+    @details Displays the chart and optionally saves it under output/Figures.
+    """
+    d1, d2, d3 = load_data(
+        sfh, sfh_type, n_freq, n_int, tag, metallicity, compact_object, subfolder
+    )
 
     if d1 is None: return
 
     totals1, totals2, totals3 = [], [], []
-    for n in range(N_freq):
+    for n in range(n_freq):
         totals1.append(np.sum(d1[f"freq_{n}_num"]))
         totals2.append(np.sum(d2[f"freq_{n}_num"]))
         totals3.append(np.sum(d3[f"freq_{n}_num"]))
 
     grand_total = np.array(totals1) + np.array(totals2) + np.array(totals3)
 
-    f_range = np.logspace(log_f_low, log_f_high, 2*N_freq+1, base=10)
-    f_plot = np.log10(np.array([f_range[2*i+1] for i in range(N_freq)]))
+    f_range = np.logspace(log_f_low, log_f_high, 2*n_freq+1, base=10)
+    f_plot = np.log10(np.array([f_range[2*i+1] for i in range(n_freq)]))
     width = (f_plot[1] - f_plot[0]) if len(f_plot) > 1 else 0.1
 
     fig, ax = plt.subplots(1, 4, figsize=(20, 6), sharey=True)
@@ -517,17 +594,42 @@ def distr_over_f(log_f_low: int, log_f_high: int, SFH: int, SFH_type: str, N_fre
 
     ax[0].set_ylabel("Number of systems")
 
-    if SAVE_FIG:
+    if save_fig:
         label = "TOTAL" if not isinstance(metallicity, str) else metallicity
-        fig.savefig(f"../output/Figures/distr_f_{N_freq}_{N_int}_SFH{SFH}{SFH_type}_{tag}_{label}_{object}{subfolder}.png")
+        fig.savefig(
+            f"../output/Figures/distr_f_{n_freq}_{n_int}_SFH{sfh}{sfh_type}_"
+            f"{tag}_{label}_{compact_object}{subfolder}.png"
+        )
 
     plt.show()
 
-def distr_over_z(SFH: int, SFH_type: str, N_freq: int, N_int: int, tag: str, metallicity: any, object: str, SAVE_FIG: bool = False, subfolder: str = "") -> None:
-    '''!
+def distr_over_z(
+    sfh: int,
+    sfh_type: str,
+    n_freq: int,
+    n_int: int,
+    tag: str,
+    metallicity: Union[str, list[str]],
+    compact_object: str,
+    save_fig: bool = False,
+    subfolder: str = "",
+) -> None:
+    """!
     @brief Create a bar chart of the number of systems in the different redshift bins.
-    '''
-    d1, d2, d3 = load_data(SFH, SFH_type, N_freq, N_int, tag, metallicity, object, subfolder)
+    @param sfh: Numeric star-formation-history selector.
+    @param sfh_type: Tabulated history label, if used.
+    @param n_freq: Number of frequency bins represented by the data.
+    @param n_int: Number of integration bins represented by the data.
+    @param tag: Output run tag.
+    @param metallicity: One metallicity key or sequence of keys to combine.
+    @param compact_object: Population type label, such as WD or BH.
+    @param save_fig: Save the figure when true.
+    @param subfolder: Output subfolder or legacy dataset selector.
+    @details Displays the chart and optionally saves it under output/Figures.
+    """
+    d1, d2, d3 = load_data(
+        sfh, sfh_type, n_freq, n_int, tag, metallicity, compact_object, subfolder
+    )
 
     if d1 is None: return
 
@@ -556,20 +658,79 @@ def distr_over_z(SFH: int, SFH_type: str, N_freq: int, N_int: int, tag: str, met
 
     ax[0].set_ylabel("Number of systems")
 
-    if SAVE_FIG:
+    if save_fig:
         label = "TOTAL" if not isinstance(metallicity, str) else metallicity
-        fig.savefig(f"../output/Figures/distr_z_{N_freq}_{N_int}_SFH{SFH}{SFH_type}_{tag}_{label}_{object}{subfolder}.png")
+        fig.savefig(
+            f"../output/Figures/distr_z_{n_freq}_{n_int}_SFH{sfh}{sfh_type}_"
+            f"{tag}_{label}_{compact_object}{subfolder}.png"
+        )
 
     plt.show()
 
 
+def summary(
+    sfh: int,
+    sfh_type: str,
+    n_freq: int,
+    n_int: int,
+    tag: str,
+    metallicity: Union[str, list[str]],
+    compact_object: str,
+    subfolder: str = "",
+) -> None:
+    """!
+    @brief Print a summary of the number of systems in the different parts of the code.
+    @param sfh: The star formation history.
+    @param sfh_type: Tabulated history label, if used.
+    @param n_freq: The number of frequency bins.
+    @param n_int: The number of integration bins.
+    @param tag: The tag of the output files.
+    @param metallicity: Single string (e.g., "z02") or list of strings.
+    @param compact_object: Compact-object population type, such as "BH" or "WD".
+    @param subfolder: The subfolder of the output files.
+    @return None. Prints system-count totals to standard output.
+    """
+
+    d1, d2, d3 = load_data(
+        sfh, sfh_type, n_freq, n_int, tag, metallicity, compact_object, subfolder
+    )
+
+    if d1 is None: return
+
+    totals1b = []
+    totals2b = []
+    totals3b = []
+
+    for n in range(n_freq):
+        totals1b.append(np.sum(d1[f"freq_{n}_num"]))
+        totals2b.append(np.sum(d2[f"freq_{n}_num"]))
+        totals3b.append(np.sum(d3[f"freq_{n}_num"]))
+
+    label = metallicity if isinstance(metallicity, str) else "all_z"
+
+    print(f"\n{tag}, {n_freq} bins, {label}, {compact_object}:\n")
+
+    print(f"Total number of systems in bulk: {np.sum(np.array(totals1b)):.5E}")
+    print(f"Total number of systems in birth bins: {np.sum(np.array(totals2b)):.5E}")
+    print(f"Total number of systems in merge bins: {np.sum(np.array(totals3b)):.5E}")
+    non_bulk_total = np.sum(totals2b) + np.sum(totals3b)
+    print(f"Total number of systems in non-bulk bins: {non_bulk_total:.5E}")
+
+    print(f"\nTOTAL: {np.sum(totals1b) + np.sum(totals2b) + np.sum(totals3b):.5E}")
+
 def main() -> None:
+    """! @brief Read post-processing settings and generate requested figures and summaries.
+    @details Takes the parameter-file path as its first command-line argument.
+    """
     if len(sys.argv) < 2:
-        print("Please provide a parameter file as 'python SeBa_pre_process.py <parameter_file>'")
+        print(
+            "Please provide a parameter file as "
+            "'python Data_visualisation.py <parameter_file>'"
+        )
         sys.exit(1)
     param_file = sys.argv[1]
 
-    # change directory to src
+    # Resolve paths relative to the src directory, as in the other scripts.
     if os.getcwd().split("/")[-1] != "src":
         print("Changing directory to src.")
         os.chdir("src")
@@ -582,14 +743,14 @@ def main() -> None:
 
     log_f_low = config.getfloat("integration", "log_f_low", fallback=-5)
     log_f_high = config.getfloat("integration", "log_f_high", fallback=4)
-    N_freq = config.getint("integration", "N_freq", fallback=50)
-    N_int = config.getint("integration", "N_int", fallback=20)
+    n_freq = config.getint("integration", "N_freq", fallback=50)
+    n_int = config.getint("integration", "N_int", fallback=20)
     max_z = config.getfloat("integration", "max_z", fallback=8)
 
-    SFH_num = config.getint("physics", "SFH_num", fallback=1)
-    SFH_type = config.get("physics", "SFH_type", fallback = "")
+    sfh_num = config.getint("physics", "SFH_num", fallback=1)
+    sfh_type = config.get("physics", "SFH_type", fallback="")
     loop = config.getboolean("physics", "loop_over_metallicity", fallback=True)
-    object = config.get("physics", "object", fallback="BH")
+    compact_object = config.get("physics", "object", fallback="BH")
 
     tag = config.get("settings", "tag", fallback="")
     integration_mode = config.get("settings", "integration_mode", fallback="")
@@ -598,42 +759,129 @@ def main() -> None:
     save = config.getboolean("postproc", "save_pp_figures", fallback=True)
     z_raw = config.get("postproc", "zfig", fallback="")
     z_list = z_raw.replace(" ", "").split(",") if z_raw else None
-    subfolder = config.get("postproc", "subfolder", fallback = "")
+    subfolder = config.get("postproc", "subfolder", fallback="")
     if subfolder == "SN24":
-        N_freq = 50 ; N_int = 20 ; max_z = 8 ; SFH_num = 1 ; object = "WD" ; loop = False ; compare = False
+        n_freq = 50
+        n_int = 20
+        max_z = 8
+        sfh_num = 1
+        compact_object = "WD"
+        loop = False
+        compare = False
     if subfolder == "HN24":
-        N_freq = 50 ; N_int = 20 ; max_z = 8 ; SFH_num = 6 ; object = "WD" ; integration_mode = "time" ; loop = True ; compare = False
+        n_freq = 50
+        n_int = 20
+        max_z = 8
+        sfh_num = 6
+        compact_object = "WD"
+        integration_mode = "time"
+        loop = True
+        compare = False
 
     if z_list:
-        multiplot(SFH_num, SFH_type, N_freq, N_int, tag, object, save, "chosen_z", compare, z_list, subfolder = subfolder)
+        multiplot(
+            sfh_num,
+            sfh_type,
+            n_freq,
+            n_int,
+            tag,
+            compact_object,
+            save,
+            "chosen_z",
+            compare,
+            z_list,
+            subfolder=subfolder,
+        )
 
     if loop:
         metallicities = ["z0001", "z0005", "z001", "z005", "z01", "z02", "z03"]
-        multiplot(SFH_num, SFH_type, N_freq, N_int, tag, object, save, "all_z", compare, subfolder = subfolder)
+        multiplot(
+            sfh_num,
+            sfh_type,
+            n_freq,
+            n_int,
+            tag,
+            compact_object,
+            save,
+            "all_z",
+            compare,
+            subfolder=subfolder,
+        )
 
-        if SFH_num == 6:
+        if sfh_num == 6:
             print("SFH6: Generating combined charts for all metallicities...")
-            stacked_bar_chart(log_f_low, log_f_high, SFH_num, SFH_type, N_freq, N_int, tag, metallicities, object, integration_mode, max_z, save, subfolder = subfolder)
-            distr_over_f(log_f_low, log_f_high, SFH_num, SFH_type, N_freq, N_int, tag, metallicities, object, save, subfolder)
-            distr_over_z(SFH_num, SFH_type, N_freq, N_int, tag, metallicities, object, save, subfolder)
-            summary(SFH_num, SFH_type, N_freq, N_int, tag, metallicities, object, subfolder)
+            stacked_bar_chart(
+                log_f_low, log_f_high, sfh_num, sfh_type, n_freq, n_int, tag,
+                metallicities, compact_object, integration_mode, max_z, save,
+                subfolder=subfolder,
+            )
+            distr_over_f(
+                log_f_low, log_f_high, sfh_num, sfh_type, n_freq, n_int, tag,
+                metallicities, compact_object, save, subfolder,
+            )
+            distr_over_z(
+                sfh_num, sfh_type, n_freq, n_int, tag, metallicities,
+                compact_object, save, subfolder,
+            )
+            summary(
+                sfh_num, sfh_type, n_freq, n_int, tag, metallicities,
+                compact_object, subfolder,
+            )
 
         else:
             for z in metallicities:
                 print(f"Generating individual charts for {z}...")
-                stacked_bar_chart(log_f_low, log_f_high, SFH_num, SFH_type, N_freq, N_int, tag, z, object, integration_mode, max_z, save, subfolder = subfolder)
-                distr_over_f(log_f_low, log_f_high, SFH_num, SFH_type, N_freq, N_int, tag, z, object, save, subfolder)
-                distr_over_z(SFH_num, SFH_type, N_freq, N_int, tag, z, object, save, subfolder)
-                summary(SFH_num, SFH_type, N_freq, N_int, tag, z, object, subfolder)
+                stacked_bar_chart(
+                    log_f_low, log_f_high, sfh_num, sfh_type, n_freq, n_int, tag,
+                    z, compact_object, integration_mode, max_z, save,
+                    subfolder=subfolder,
+                )
+                distr_over_f(
+                    log_f_low, log_f_high, sfh_num, sfh_type, n_freq, n_int, tag,
+                    z, compact_object, save, subfolder,
+                )
+                distr_over_z(
+                    sfh_num, sfh_type, n_freq, n_int, tag, z, compact_object,
+                    save, subfolder,
+                )
+                summary(
+                    sfh_num, sfh_type, n_freq, n_int, tag, z, compact_object,
+                    subfolder,
+                )
     else:
         metallicity = config.get("physics", "metallicity", fallback="z02")
-        multiplot(SFH_num, SFH_type, N_freq, N_int, tag, object, save, "1z", compare, [metallicity], subfolder)
+        multiplot(
+            sfh_num,
+            sfh_type,
+            n_freq,
+            n_int,
+            tag,
+            compact_object,
+            save,
+            "1z",
+            compare,
+            [metallicity],
+            subfolder,
+        )
 
         print(f"Generating charts for {metallicity}...")
-        stacked_bar_chart(log_f_low, log_f_high, SFH_num, SFH_type, N_freq, N_int, tag, metallicity, object, integration_mode, max_z, save, subfolder = subfolder)
-        distr_over_f(log_f_low, log_f_high, SFH_num, SFH_type, N_freq, N_int, tag, metallicity, object, save, subfolder)
-        distr_over_z(SFH_num, SFH_type, N_freq, N_int, tag, metallicity, object, save, subfolder)
-        summary(SFH_num, SFH_type, N_freq, N_int, tag, metallicity, object, subfolder)
+        stacked_bar_chart(
+            log_f_low, log_f_high, sfh_num, sfh_type, n_freq, n_int, tag,
+            metallicity, compact_object, integration_mode, max_z, save,
+            subfolder=subfolder,
+        )
+        distr_over_f(
+            log_f_low, log_f_high, sfh_num, sfh_type, n_freq, n_int, tag,
+            metallicity, compact_object, save, subfolder,
+        )
+        distr_over_z(
+            sfh_num, sfh_type, n_freq, n_int, tag, metallicity,
+            compact_object, save, subfolder,
+        )
+        summary(
+            sfh_num, sfh_type, n_freq, n_int, tag, metallicity,
+            compact_object, subfolder,
+        )
 
 if __name__ == "__main__":
     main()

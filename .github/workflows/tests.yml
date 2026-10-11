@@ -1,0 +1,26 @@
+name: Small-sample workflow tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Create project environment
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          miniforge-variant: Miniforge3
+          environment-file: WD_GWB.yml
+          activate-environment: WD_GWB
+          auto-activate-base: false
+
+      - name: Run small-sample end-to-end checks
+        shell: bash -el {0}
+        run: pytest -q

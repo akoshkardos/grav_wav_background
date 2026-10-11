@@ -1,5 +1,5 @@
 """!
-@file auxiliary.py
+@file physics.py
 @author Seppe Staelens
 @date 2024-07-29
 @brief This module contains auxiliary physics functions that are used to pre-process the population synthesis data.
@@ -12,14 +12,14 @@ from astropy import constants as cst
 def chirp(m1: float, m2: float) -> float:
     """!
     @brief Calculate the chirp mass in solar masses.
-    @param m1: mass of the first object in solar masses.
-    @param m2: mass of the second object in solar masses.
+    @param m1: Mass of the first binary component in solar masses.
+    @param m2: Mass of the second binary component in solar masses.
     @return The chirp mass in solar masses.
     """
     return (m1 * m2) ** (3 / 5) / (m1 + m2) ** (1 / 5)
 
 
-def WD_radius(m: float) -> float:
+def wd_radius(m: float) -> float:
     """!
     @brief Calculate the radius of a white dwarf of mass m.
     @param m: mass of the white dwarf in solar masses.
@@ -41,8 +41,8 @@ def a_min(m1: float, m2: float) -> float:
     @param m2: mass of the second WD in solar masses.
     @return The minimal separation in solar radii.
     """
-    r1 = WD_radius(m1)
-    r2 = WD_radius(m2)
+    r1 = wd_radius(m1)
+    r2 = wd_radius(m2)
 
     q = m2 / m1
 
@@ -53,7 +53,7 @@ def a_min(m1: float, m2: float) -> float:
     return max(ap_min, as_min)
 
 
-def Kepler(m1: float, m2: float) -> float:
+def kepler(m1: float, m2: float) -> float:
     """!
     @brief Calculate the orbital frequency of a binary with separation a_min and masses m1, m2.
     @param m1: mass of the first WD in solar masses.
@@ -68,7 +68,7 @@ def Kepler(m1: float, m2: float) -> float:
     )
     return nu.value
 
-def nu_max_BH(m1: float, m2:float) -> float:
+def nu_max_bh(m1: float, m2:float) -> float:
     """!
     @brief Calculate maximum orbital frequency of BH at ISCO interaction point for a binary with masses m1,m2.
     @param m1: mass of the first BH in solar masses.
@@ -77,7 +77,11 @@ def nu_max_BH(m1: float, m2:float) -> float:
     """
     m = cst.M_sun * (m1 + m2)
     eta = m1 * m2 / (m1 + m2)**2
-    nu = cst.c**3 / (2 * np.pi * cst.G * m) * (3 / (14 * eta) * (1 - np.sqrt(1 - 14 * eta / 9)))**(3 / 2)
+    nu = (
+        cst.c**3
+        / (2 * np.pi * cst.G * m)
+        * (3 / (14 * eta) * (1 - np.sqrt(1 - 14 * eta / 9))) ** (3 / 2)
+    )
     return nu.value
 
 def K(M: float) -> float:
@@ -94,7 +98,7 @@ def K(M: float) -> float:
     )
 
 
-def Period(a: float, m1: float, m2: float) -> np.array:
+def period(a: float, m1: float, m2: float) -> np.array:
     """!
     @brief Calculate the orbital period of a binary system from Kepler's law.
     @param a: separation in solar radii.

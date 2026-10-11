@@ -1,12 +1,23 @@
 cff-version: 1.2.0
-message: "If you use this software, please cite it as below."
+message: "If you use this software, please cite version 1.0.0."
+type: software
+title: "WDBH_GWB"
 authors:
-  - family-names: Staelens
-    given-names: Seppe
-    orcid: https://orcid.org/0000-0002-1262-1600
-  - family-names: Hofman
-    given-names: Sophie
-title: "White Dwarf AGWB"
-version: 0.2.0
-date-released: 2024-09-23
-url: "https://github.com/SeppeStaelens/White_Dwarf_AGWB"
+  - family-names: Kardos
+    given-names: Ákosh
+version: "1.0.0"
+date-released: "2026-10-12"
+repository-code: "https://github.com/akoshkardos/grav_wav_background"
+license: MIT
+references:
+  - type: software
+    title: "White Dwarf AGWB"
+    authors:
+      - family-names: Staelens
+        given-names: Seppe
+        orcid: https://orcid.org/0000-0002-1262-1600
+      - family-names: Hofman
+        given-names: Sophie
+    version: "0.2.0"
+    date-released: "2024-09-23"
+    repository-code: "https://github.com/SeppeStaelens/White_Dwarf_AGWB"

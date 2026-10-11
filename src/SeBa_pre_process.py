@@ -8,12 +8,11 @@
 import numpy as np
 import sys
 import os
-from pathlib import Path
 import pandas as pd
 import configparser as cfg
 from pathlib import Path
 
-from modules.physics import *
+from modules.physics import K, kepler, period, chirp, nu_max_bh
 from modules.auxiliary import tau_syst
 
 if len(sys.argv) < 2:
@@ -35,19 +34,28 @@ config.read(param_file)
 
 def pre_proc(metallicity: str) -> None:
     """!
-    @brief Function to calculate values from the SeBa output and save them in a dataframe.
+    @brief Derive simulation columns from one SeBa population file.
+    @param metallicity: Metallicity directory/key used to locate the input file.
+    @details Reads settings from the parameter file loaded at module startup.
+    When save_datafile is enabled, writes the preprocessed table beside the input.
     """
 
     # --- Settings --- #
-    SAVE_FILE = config.getboolean("settings", "save_datafile", fallback=False)
-    object = config.get("physics", "object", fallback="WD")
+    save_file = config.getboolean("settings", "save_datafile", fallback=False)
+    compact_object = config.get("physics", "object", fallback="WD")
     pop_synth = config.get("physics", "pop_synth", fallback="AlphaAlpha")
     alpha = config.get("physics", "alpha", fallback = "Alpha1")
     # add _Seppe before .dat.gz to run his data
-    if object == "BH":
-        data_file = Path(f"../data/{object}/{pop_synth}/{alpha}/{metallicity}/{metallicity}_t0aim1m1.dat")
-    if object == "WD":
-        data_file = Path(f"../data/{object}/{pop_synth}/{alpha}/{metallicity}/{metallicity}_t0aim1m1.dat.gz")
+    if compact_object == "BH":
+        data_file = Path(
+            f"../data/{compact_object}/{pop_synth}/{alpha}/{metallicity}/"
+            f"{metallicity}_t0aim1m1.dat"
+        )
+    if compact_object == "WD":
+        data_file = Path(
+            f"../data/{compact_object}/{pop_synth}/{alpha}/{metallicity}/"
+            f"{metallicity}_t0aim1m1.dat.gz"
+        )
 
     if not data_file.exists():
         print(f"File {data_file} does not exist. Skipping.")
@@ -58,34 +66,31 @@ def pre_proc(metallicity: str) -> None:
     # The GW frequency is twice the orbital frequency.
     m1 = population.m1
     m2 = population.m2
-    orbital_frequencies = 1 / Period(population.a, m1, m2)
+    orbital_frequencies = 1 / period(population.a, m1, m2)
     population["nu0"] = orbital_frequencies
 
-    # Calculate the chirp masses
     population["M_ch"] = chirp(m1, m2)
 
-    # Calculate the factor K
     population["K"] = K(population.M_ch)
 
-    # Calculate the maximal frequencies. The loop is because of a boolean operation in Kepler
+    # Calculate the maximal frequencies. The loop is because of a boolean operation in kepler
     nu_list = []
-    if object == "BH":
+    if compact_object == "BH":
         for ma,mb in zip(m1, m2):
-            nu_list.append(nu_max_BH(ma,mb))
-    if object == "WD":
+            nu_list.append(nu_max_bh(ma,mb))
+    if compact_object == "WD":
         for ma, mb in zip(m1, m2):
-            nu_list.append(Kepler(ma, mb))
+            nu_list.append(kepler(ma, mb))
     population["nu_max"] = np.array(nu_list)
 
-    # Calculate the maximal time to coalescence
     population["Dt_max"] = tau_syst(
         2 * population.nu0, 2 * population.nu_max, population.K
     )
     save_filename = Path(
-        f"../data/{object}/{pop_synth}/{alpha}/{metallicity}/Initials_{metallicity}.txt.gz"
+        f"../data/{compact_object}/{pop_synth}/{alpha}/{metallicity}/Initials_{metallicity}.txt.gz"
     )  # add _Seppe before .dat.gz when running his data
 
-    if SAVE_FILE:
+    if save_file:
         population.to_csv(save_filename, index=False)
 
 
@@ -93,6 +98,7 @@ def main() -> None:
     """!
     @brief Main function.
     @details The main function checks whether the metallicity is looped over and runs the pre-processing.
+    @return None.
     """
 
     loop = config.getboolean("physics", "loop_over_metallicity", fallback=False)

@@ -16,26 +16,6 @@ global s_in_Myr
 s_in_Myr = (u.Myr).to(u.s)
 
 
-def calc_parabola_vertex(
-    x1: float, y1: float, x2: float, y2: float, x3: float, y3: float
-) -> tuple:
-    """!
-    @brief Calculate the coefficients of a parabola given three points.
-    @param x1, y1: x and y coordinates of the first point.
-    @param x2, y2: x and y coordinates of the second point.
-    @param x3, y3: x and y coordinates of the third point.
-    @return A, B, C: coefficients of the parabola.
-    """
-    denom = (x1 - x2) * (x1 - x3) * (x2 - x3)
-    A = (x3 * (y2 - y1) + x2 * (y1 - y3) + x1 * (y3 - y2)) / denom
-    B = (x3 * x3 * (y1 - y2) + x2 * x2 * (y3 - y1) + x1 * x1 * (y2 - y3)) / denom
-    C = (
-        x2 * x3 * (x2 - x3) * y1 + x3 * x1 * (x3 - x1) * y2 + x1 * x2 * (x1 - x2) * y3
-    ) / denom
-
-    return A, B, C
-
-
 def parabola(x: float, a: float, b: float, c: float) -> float:
     """!
     @brief Calculate the value of a parabola given the coefficients.
@@ -73,35 +53,35 @@ def get_width_z_shell_from_z(z_vals: np.array) -> np.array:
     return np.array(shells)
 
 
-def Omega(Omega_ref: float, f_ref: float, freq: np.array) -> np.array:
+def omega(omega_ref: float, f_ref: float, freq: np.array) -> np.array:
     """!
     @brief Create a f^{2/3} spectrum line.
-    @param Omega_ref: reference Omega value.
+    @param omega_ref: reference omega value.
     @param f_ref: reference frequency.
     @param freq: frequency array.
-    @return Omega: Omega array.
+    @return omega: omega array.
     """
-    return Omega_ref * 10 ** ((2 / 3) * (np.log10(freq) - np.log10(f_ref)))
+    return omega_ref * 10 ** ((2 / 3) * (np.log10(freq) - np.log10(f_ref)))
 
 
-def make_Omega_plot_unnorm(
+def make_omega_plot_unnorm(
     f: np.array,
-    Omega_sim: np.array,
+    omega_sim: np.array,
     save: bool = False,
     save_name: str = "void",
     show: bool = False,
 ) -> None:
     """!
-    @brief Make a plot showing Omega for BWD.
+    @brief Make a plot showing omega for BWD.
     @param f: frequency array.
-    @param Omega_sim: Omega array.
+    @param omega_sim: omega array.
     @param save: save the figure.
     @param save_name: name of the saved figure.
     @param show: show the figure.
     """
     fig, ax = plt.subplots(1, 1, figsize=(10, 8))
 
-    ax.plot(np.log10(f), Omega_sim, color="green", linewidth=3, label="Sim BWD")
+    ax.plot(np.log10(f), omega_sim, color="green", linewidth=3, label="Sim BWD")
     ax.grid(color="gainsboro", alpha=0.7)
     ax.set_xlabel(r"$\log_{10}(f$ / Hz$)$")
     ax.set_ylabel(r"$\Omega_{GW}$")
@@ -130,7 +110,7 @@ def tau_syst(f_0: float, f_1: float, K: float) -> float:
 
 
 def determine_upper_freq(
-    nu_low: float, evolve_time: float, K: float, DEBUG: bool = False
+    nu_low: float, evolve_time: float, K: float, debug: bool = False
 ) -> float:
     """!
     @brief Determines upper ORBITAL frequency for a binary with K, starting from nu_0, evolving over evolve_time.
@@ -139,29 +119,34 @@ def determine_upper_freq(
     @param K: constant depending on the binary.
     @return nu_upp: upper orbital frequency.
     """
-    if DEBUG:
+    if debug:
         assert (nu_low ** (-8 / 3)) > (8 * K * evolve_time * s_in_Myr / 3)
     nu_upp = (nu_low ** (-8 / 3) - 8 * K * evolve_time * s_in_Myr / 3) ** (-3 / 8)
-    if DEBUG:
+    if debug:
         assert nu_upp > nu_low
     return nu_upp
 
 
 def drop_redundant_binaries(
-    population: pd.DataFrame, log_f_low: float, T0: float
+    population: pd.DataFrame, log_f_low: float, max_lookback_time: float
 ) -> pd.DataFrame:
     """!
-    Drop the binaries in the population that never make it to the lower limit of the considered frequency range.
-    @param population: dataframe with binaries of which some are potentially irrelevant
-    @return dataframe where irrelevant binaries have been removed.
+    Drop population binaries that cannot enter the selected frequency band.
+    @param population: Binary table with nu0 and K columns.
+    @param log_f_low: Base-10 logarithm of the lower frequency limit, in Hz.
+    @param max_lookback_time: Lookback time to max_z, as an Astropy time quantity.
+    @return Copy of the population with binaries that cannot enter the band
+    within max_lookback_time removed; the returned index is reset.
     """
     to_check = population[population["nu0"] < 10**log_f_low / 2]
     can_not_be_seen = (
-        tau_syst(2 * to_check["nu0"], 10**log_f_low, to_check["K"]) > T0.value
+        tau_syst(2 * to_check["nu0"], 10**log_f_low, to_check["K"])
+        > max_lookback_time.value
     )
     relevant_population = population.drop(to_check[can_not_be_seen].index)
     print(
-        f"Out of {len(to_check)} binaries below 1e-5 Hz, only {len(to_check) - np.sum(can_not_be_seen)} enter(s) our window."
+        f"Out of {len(to_check)} binaries below 1e-5 Hz, only "
+        f"{len(to_check) - np.sum(can_not_be_seen)} enter(s) our window."
     )
     print(
         f"Dataset reduced from {len(population)} rows to {len(relevant_population)} rows."

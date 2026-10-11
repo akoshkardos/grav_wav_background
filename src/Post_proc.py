@@ -1,8 +1,11 @@
-"""!@file GWB.py
-@date 2024-07-26
-@brief This program calculates the GWB based on the method described in my thesis, using uniform redshift bins.
-@details The program calculates the GWB based on the method described in my thesis, using uniform redshift bins. It is divided into three main parts: the bulk part, the birth part, and the merger part. The bulk part calculates the majority of the GWB, what is referred to in my thesis as the 'generic case'. The birth part adds the contribution of the 'birth bins' to the bulk GWB. The merger part adds the contribution of the 'merger bins' due to Kepler max to the bulk GWB. The program saves a dataframe with all the essential information.
-@author Seppe Staelens
+"""!
+@file Post_proc.py
+@date 2026-07-23
+@brief Provide post-processing tools for eccentric binary populations and GWB results.
+@details Includes eccentricity evolution and harmonic corrections, diagnostic
+population plots, comparisons between GWB models, and uncertainty visualizations.
+Plotting routines display figures and can optionally save them under output/Figures.
+@author Ákosh Kardos
 """
 
 import numpy as np
@@ -10,19 +13,15 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from scipy.interpolate import interp1d
 from pathlib import Path
-from Data_visualisation import calc_parabola_vertex, LISA_PI_curve, ET_PI_curve, Omega
-import math
+
+from Data_visualisation import lisa_pi_curve, et_pi_curve, omega
 
 from astropy import units as u
 from astropy import constants as cst
 from astropy.cosmology import Planck18
-from astropy.cosmology import z_at_value
 from scipy.special import jv
 from scipy.optimize import brentq
 import seaborn as sns
-import schnell as snl
-import astropy.units as u
-import matplotlib as mpl
 
 
 plt.rc('font',   size=12)      # controls default text sizes
@@ -34,31 +33,49 @@ plt.rc('legend', fontsize=14) # legend fontsize
 plt.rc('figure', titlesize=14) # fontsize of the figure title
 
 # LVK O3, alpha = 2/3 at 25 Hz
-Omega_upp = 2.9e-9
-Omega_BBH = 0.8e-9
-Omega_BNS = 3.6e-11
+OMEGA_UPPER = 2.9e-9
+OMEGA_BBH = 0.8e-9
+OMEGA_BNS = 3.6e-11
 
-Omega_BBH_up  = 1.9e-9
-Omega_BNS_up  = 1.0e-10
-Omega_BBH_low = 0.3e-9
-Omega_BNS_low = 0.8e-11
+OMEGA_BBH_UP  = 1.9e-9
+OMEGA_BNS_UP  = 1.0e-10
+OMEGA_BBH_LOW = 0.3e-9
+OMEGA_BNS_LOW = 0.8e-11
 
-"""
-Physics functions
-"""
+# Eccentric-binary physics, diagnostics, and post-processing plots.
 
-def Period(a: float, m1: float, m2: float) -> np.array:
+# --- Binary and eccentricity helpers ---
+
+def period(a: float, m1: float, m2: float) -> np.array:
+    """! @brief Calculate the Keplerian orbital period from separation and component masses.
+    @param a: Separation in solar radii.
+    @param m1: First component mass in solar masses.
+    @param m2: Second component mass in solar masses.
+    @return Orbital period as an Astropy quantity.
+    """
     return (
         (a * cst.R_sun) ** 3 * 4 * np.pi**2 / (cst.G * cst.M_sun * (m1 + m2))
     ) ** (1 / 2)
 
 def chirp_mass(m1, m2):
+    """! @brief Calculate binary chirp mass from component masses in solar masses.
+    @return Chirp mass in solar masses.
+    """
     return (m1 * m2)**(3/5) / (m1 + m2)**(1/5)
 
-def F_e(e):
+def f_e(e):
+    """! @brief Evaluate the eccentricity enhancement factor F(e).
+    @param e: Orbital eccentricity.
+    @return Dimensionless enhancement factor.
+    """
     return (1 + (73/24)*e**2 + (37/96)*e**4) / (1 - e**2)**(7/2)
 
 def g_ne(n, e):
+    """! @brief Evaluate the Peters-Mathews power function for harmonic n.
+    @param n: Positive harmonic number.
+    @param e: Orbital eccentricity.
+    @return Dimensionless harmonic power factor.
+    """
 
     Jn2 = jv(n-2, n*e)
     Jn1 = jv(n-1, n*e)
@@ -72,17 +89,22 @@ def g_ne(n, e):
 
     return (n**4 / 32) * (term1 + term2 + term3)
 
-def Phi_n(n, e):
-    return (2/n)**(2/3) * g_ne(n, e) / F_e(e)
+def phi_n(n, e):
+    """! @brief Calculate the spectral correction for harmonic n.
+    @param n: Positive harmonic number.
+    @param e: Orbital eccentricity.
+    @return Dimensionless correction factor.
+    """
+    return (2/n)**(2/3) * g_ne(n, e) / f_e(e)
 
 
 
 def e_at_fp_ratio(fp_ratio, e_0):
     """!
     @brief At every fp/fp0 step give back the corresponding e.
-    @param fp_ratio: fp/fp0 value for a given step starting at 1.
-    @param e_0: starting eccentricity.
-    @return e corresponding to fp/fp0.
+    @param fp_ratio: Dimensionless orbital-frequency ratio fp/fp0.
+    @param e_0: Starting orbital eccentricity.
+    @return Eccentricity corresponding to fp_ratio, or NaN if root finding fails.
     """
     if fp_ratio <= 1.0:
         return e_0  # hasn't evolved yet
@@ -105,8 +127,8 @@ def e_at_fp_ratio(fp_ratio, e_0):
 def freq_e_interp(e_0: float):
     """!
     @brief Create e corresponding to fp/fp0 table that goes below fp/fp0 = 1 for making smooth curve in phi over fr/fp0 graph.
-    @param e_0: starting eccentricity
-    @return Table of e corresponding to fp/fp0
+    @param e_0: Starting orbital eccentricity.
+    @return DataFrame with eccentricity and corresponding fp/fp0 columns.
     """
 
     e_range = np.linspace(0.9999, 1e-6, 5000)
@@ -127,19 +149,27 @@ def freq_e_interp(e_0: float):
     return freqtable
 
 def compute_phi_gwb_harmonic(population: pd.DataFrame, n_pole: int = 5,
-                               n_e_steps: int = 100, n_fr_bins: int = 50, SAVE_FIG: bool = False):
+                               n_e_steps: int = 100, n_fr_bins: int = 50, save_fig: bool = False):
     """!
     @brief For each binary calculate fr = n * fp0 * (fp/fp0) at every e (so fp) step and store corresponding phi_n, create chirp mass weighted phi over fr graph.
     @param population: population file containing e0, f0, m1 and m2.
     @param n_pole: number of calculated harmonics.
     @param n_e_steps: number of calculated e steps.
     @param n_fr_bins: number of fr storage bins.
-    @return Chirp mass weighted phi correction over fr.
+    @param save_fig: Save the generated figure when true.
+    @return Displays the chirp-mass-weighted Phi correction versus radiative frequency.
     """
 
     ecc = population['e'].values
     m_c = chirp_mass(population['m1'].values, population['m2'].values)
-    f_p0 = (1.0 / Period(population['a'].values, population['m1'].values, population['m2'].values)).to(u.Hz).value
+    f_p0 = (
+        1.0
+        / period(
+            population["a"].values,
+            population["m1"].values,
+            population["m2"].values,
+        )
+    ).to(u.Hz).value
 
     fp_ratio_steps = np.logspace(0, 3, n_e_steps)
 
@@ -159,7 +189,7 @@ def compute_phi_gwb_harmonic(population: pd.DataFrame, n_pole: int = 5,
             fp_current = fp0 * fp_ratio
             for n in range(1, n_pole + 1):
                 fr = n * fp_current
-                phi_n_val = Phi_n(n, e_step)
+                phi_n_val = phi_n(n, e_step)
                 collected_fr[n].append(fr)
                 collected_phi[n].append(phi_n_val)
                 collected_m_c[n].append(mc_fac)
@@ -222,21 +252,22 @@ def compute_phi_gwb_harmonic(population: pd.DataFrame, n_pole: int = 5,
     ax.set_xscale('log')
     ax.set_yscale('log')
     ax.set_xlabel('$f_r$')
-    ax.set_ylabel('$\\langle\\Phi_n\\rangle$ (Chirp mass weighted)')
+    ax.set_ylabel('$\\langle\\phi_n\\rangle$ (Chirp mass weighted)')
     ax.set_xlim(1e-7, 1e-4)
     ax.set_ylim(1e-3, 1.1)
     ax.legend(fontsize=9)
     plt.tight_layout()
     plt.show()
-    if SAVE_FIG:
+    if save_fig:
         fig.savefig(f"../output/Figures/phi_GWB.png")
 
-def phi_curve(e_0: float, n_pole: int, SAVE_FIG: bool = False):
+def phi_curve(e_0: float, n_pole: int, save_fig: bool = False):
     """!
     @brief Create phi over fr/fp0 graph for individual harmonics and the sum phi_n.
     @param e_0: starting eccentricity.
     @param n_pole: number of harmonics to show.
-    @return Graph of phi over fr/fp0.
+    @param save_fig: Save the generated figure when true.
+    @return Displays phi_n and their sum versus fr/fp0.
     """
     table = freq_e_interp(e_0)
     e_vals = table["eccentricity"].values
@@ -244,25 +275,31 @@ def phi_curve(e_0: float, n_pole: int, SAVE_FIG: bool = False):
 
     for n in range(1, n_pole+1):
 
-        phi_n_vals = Phi_n(n, e_vals)
+        phi_n_vals = phi_n(n, e_vals)
         table[f"Phi_{n}"] = phi_n_vals
         table[f"fr/fp0 {n}"] = table["f_p/f_p0"] * n
         phi_total += phi_n_vals
 
     fr_fp0_grid = np.logspace(0, 3, 1000)
 
-    Phi_interp_list = []
+    phi_interp_list = []
     for n in range(1, n_pole+1):
         f_n = table[f"fr/fp0 {n}"].values
-        Phi_n_vals = table[f"Phi_{n}"].values
-        interp_func = interp1d(np.log10(f_n), np.log10(Phi_n_vals), kind='linear', bounds_error=False, fill_value=-np.inf)
-        Phi_interp_list.append(10**interp_func(np.log10(fr_fp0_grid)))
+        phi_n_vals = table[f"Phi_{n}"].values
+        interp_func = interp1d(
+            np.log10(f_n),
+            np.log10(phi_n_vals),
+            kind="linear",
+            bounds_error=False,
+            fill_value=-np.inf,
+        )
+        phi_interp_list.append(10**interp_func(np.log10(fr_fp0_grid)))
 
-    Phi_total_interp = np.sum(Phi_interp_list, axis=0)
+    phi_total_interp = np.sum(phi_interp_list, axis=0)
 
     Phi_total_df = pd.DataFrame({
         "fr/fp0": fr_fp0_grid,
-        "Phi_total": Phi_total_interp
+        "Phi_total": phi_total_interp
     })
 
     fig, ax = plt.subplots(figsize=(5, 5))
@@ -282,15 +319,27 @@ def phi_curve(e_0: float, n_pole: int, SAVE_FIG: bool = False):
     ax.legend()
     plt.tight_layout()
     plt.show()
-    if SAVE_FIG:
+    if save_fig:
         fig.savefig(f"../output/Figures/phi_curve.png")
 
-def eccentricity_cloud(population, n_pole=5, n_e_steps=50, SAVE_FIG: bool = False):
+def eccentricity_cloud(population, n_pole=5, n_e_steps=50, save_fig: bool = False):
     """!
-    @brief Plot the density of eccentricity vs radiative frequency for the population.
+    @brief Plot eccentricity against radiative and orbital frequency for a population.
+    @param population: Population table with e, a, m1, and m2 columns.
+    @param n_pole: Number of harmonics to include.
+    @param n_e_steps: Number of evolution steps per binary.
+    @param save_fig: Save the generated figure when true.
+    @return Displays the two-panel density plot.
     """
     ecc_initial = population['e'].values
-    f_p0 = (1.0 / Period(population['a'].values, population['m1'].values, population['m2'].values)).to(u.Hz).value
+    f_p0 = (
+        1.0
+        / period(
+            population["a"].values,
+            population["m1"].values,
+            population["m2"].values,
+        )
+    ).to(u.Hz).value
     fp_ratio_steps = np.logspace(0, 3, n_e_steps)
 
     all_fr = []
@@ -317,16 +366,22 @@ def eccentricity_cloud(population, n_pole=5, n_e_steps=50, SAVE_FIG: bool = Fals
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
 
     # Plot 1: Radiative Frequency (Spread out by harmonics)
-    hb1 = ax1.hexbin(all_fr, all_e, gridsize=50, bins='log', cmap='inferno', xscale='log', mincnt=1)
+    hb1 = ax1.hexbin(
+        all_fr, all_e, gridsize=50, bins="log", cmap="inferno",
+        xscale="log", mincnt=1,
+    )
     ax1.set_xscale('log')
     ax1.set_xlabel('$f_r$')
     ax1.set_ylabel('$e$')
 
     # Plot 2: Orbital Frequency (The physical track of the binary)
     # Using all_e[::n_pole] correctly matches the length of all_fp
-    hb2 = ax2.hexbin(all_fp, all_e[::n_pole], gridsize=50, bins='log', cmap='inferno', xscale='log', mincnt=1)
+    hb2 = ax2.hexbin(
+        all_fp, all_e[::n_pole], gridsize=50, bins="log", cmap="inferno",
+        xscale="log", mincnt=1,
+    )
     ax2.set_xscale('log')
-    ax2.set_xlabel('$f_e$') # Corrected Label
+    ax2.set_xlabel('$f_e$')
     ax2.set_ylabel('$e$')
 
     plt.colorbar(hb1, ax=ax1, label='$\log_{10}(\mathrm{Count})$')
@@ -334,25 +389,33 @@ def eccentricity_cloud(population, n_pole=5, n_e_steps=50, SAVE_FIG: bool = Fals
 
     plt.tight_layout()
     plt.show()
-    if SAVE_FIG:
+    if save_fig:
         fig.savefig(f"../output/Figures/eccentricity_cloud.png")
 
 
-def compare_plot(compare, tag, SFRD, save: bool = False, add_WD: bool = False):
+def compare_plot(compare, tag, sfrd, save: bool = False, add_wd: bool = False):
+    """!
+    @brief Compare summed BH GWB spectra by SFRD model or population tag.
+    @param compare: Select comparison axis, either "SFRD" or tag comparison.
+    @param tag: Population tag used when comparing SFRD models.
+    @param sfrd: SFRD label used when comparing population tags.
+    @param save: Save the figure when true.
+    @param add_wd: Add the corresponding summed WD spectrum when true.
+    @return Displays the comparison plot.
+    """
 
     fig, ax = plt.subplots(figsize=(8, 6))
     z_list = ["z0001", "z001", "z005", "z01", "z02", "z03"]
-    SFRD_list = ["MZ19", "LZ19", "HZ19", "LZ21", "HZ21"]
+    sfrd_list = ["MZ19", "LZ19", "HZ19", "LZ21", "HZ21"]
     tag_list = ["GA1T", "GA4T", "AA1T", "AA4T"]
-    #tag_list = ["GA4T", "GA4Z"]
     totals = {}
-    for type in (SFRD_list if compare == "SFRD" else tag_list):
+    for model_choice in (sfrd_list if compare == "SFRD" else tag_list):
         type_data = None
         for z in z_list:
             if compare == "SFRD":
-                path = f"../output/GWBs/SFH6{type}_100_20_{z}_wmerge_{tag}_BH.txt"
+                path = f"../output/GWBs/SFH6{model_choice}_100_20_{z}_wmerge_{tag}_BH.txt"
             else:
-                path = f"../output/GWBs/SFH6{SFRD}_100_20_{z}_wmerge_{type}_BH.txt"
+                path = f"../output/GWBs/SFH6{sfrd}_100_20_{z}_wmerge_{model_choice}_BH.txt"
             try:
                 data = pd.read_csv(path)
                 if type_data is None:
@@ -360,60 +423,66 @@ def compare_plot(compare, tag, SFRD, save: bool = False, add_WD: bool = False):
                 else:
                     type_data["Om"] += data["Om"]
             except Exception as e:
-                print(f"Skipped {type}, {z}: {e}")
-        totals[type] = type_data
+                print(f"Skipped {model_choice}, {z}: {e}")
+        totals[model_choice] = type_data
         omega_25 = np.interp(25, type_data["f"].values, type_data["Om"].values)
-        print(f"Omega at 25 Hz ({type}): {omega_25:.3e}")
+        print(f"Omega at 25 Hz ({model_choice}): {omega_25:.3e}")
 
-    WD_data_accum = None
-    if add_WD:
+    wd_data_accum = None
+    if add_wd:
         for z in z_list:
-            path_WD = f"../output/GWBs/SFH6{SFRD}_50_20_{z}_wmerge_{tag}_WD.txt"
+            wd_path = f"../output/GWBs/SFH6{sfrd}_50_20_{z}_wmerge_{tag}_WD.txt"
             try:
-                data_WD = pd.read_csv(path_WD)
-                if WD_data_accum is None:
-                    WD_data_accum = data_WD[["f", "Om"]].copy()
+                wd_data = pd.read_csv(wd_path)
+                if wd_data_accum is None:
+                    wd_data_accum = wd_data[["f", "Om"]].copy()
                 else:
-                    WD_data_accum["Om"] += data_WD["Om"]
+                    wd_data_accum["Om"] += wd_data["Om"]
             except Exception as e:
                 print(f"Skipped WD {z}: {e}")
-    iter_list = SFRD_list if compare == "SFRD" else tag_list
+    iter_list = sfrd_list if compare == "SFRD" else tag_list
     colors = plt.cm.brg(np.linspace(0.5, 0.9, len(iter_list)))
     for i, (key, data) in enumerate(totals.items()):
         if data is None:
             continue
         ax.plot(data["f"], data["Om"], linewidth=1.3, label=f"{key}", color=colors[i])
 
-    if add_WD and WD_data_accum is not None:
-        ax.plot(WD_data_accum["f"], WD_data_accum["Om"], linewidth=1.0, linestyle="--", color="black", label = f"WD {tag} {SFRD}")
+    if add_wd and wd_data_accum is not None:
+        ax.plot(
+            wd_data_accum["f"],
+            wd_data_accum["Om"],
+            linewidth=1.0,
+            linestyle="--",
+            color="black",
+            label=f"WD {tag} {sfrd}",
+        )
 
-    a, b, c = calc_parabola_vertex(-3, -12, -2.5, -12.5, -2, -12)
-    get_Omega_LISA = LISA_PI_curve(t_obs=4)
-    get_Omega_ET = ET_PI_curve(t_obs=4)
+    get_omega_lisa = lisa_pi_curve(t_obs=4)
+    get_omega_et = et_pi_curve(t_obs=4)
     logf1_DeciCon10, logpi_DeciCon10 = np.loadtxt(f"../data/DeciCon10.dat").transpose()
 
     log_f_high = 2 ; log_f_low = -5
     freq = np.logspace(log_f_low - 0.1, log_f_high + 0.1, 1000)
 
-    ax.plot(freq, Omega(Omega_upp, 25, freq),
+    ax.plot(freq, omega(OMEGA_UPPER, 25, freq),
             linestyle=":", color="#00A6FB", linewidth=1.1,
             label="LVK Upper Limit", zorder=1)
-    ax.plot(freq, Omega(Omega_BBH, 25, freq),
+    ax.plot(freq, omega(OMEGA_BBH, 25, freq),
             color="#4A7FA8", linewidth=0.9, alpha=0.8,
             label="LVK BBH", zorder=1)
-    ax.plot(freq, Omega(Omega_BNS, 25, freq),
+    ax.plot(freq, omega(OMEGA_BNS, 25, freq),
             color="#1A4F78", linewidth=0.9, alpha=0.8,
             label="LVK BNS", zorder=1)
 
-    ax.fill_between(freq, Omega(Omega_BBH_low, 25, freq), Omega(Omega_BBH_up, 25, freq),
+    ax.fill_between(freq, omega(OMEGA_BBH_LOW, 25, freq), omega(OMEGA_BBH_UP, 25, freq),
                     color="#4A7FA8", alpha=0.16, zorder=0)
-    ax.fill_between(freq, Omega(Omega_BNS_low, 25, freq), Omega(Omega_BNS_up, 25, freq),
+    ax.fill_between(freq, omega(OMEGA_BNS_LOW, 25, freq), omega(OMEGA_BNS_UP, 25, freq),
                     color="#1A4F78", alpha=0.16, zorder=0)
 
-    ax.plot(freq, get_Omega_LISA(freq),
+    ax.plot(freq, get_omega_lisa(freq),
             color="#AAAAAA", linewidth=1.0, linestyle=(0, (4, 2, 1, 2)),
             label="LISA", zorder=2)
-    ax.plot(freq, get_Omega_ET(freq),
+    ax.plot(freq, get_omega_et(freq),
             color="#666666", linewidth=1.0, linestyle=(0, (4, 2, 1, 2)),
             label="ET", zorder=2)
     ax.loglog(10**logf1_DeciCon10, 10**logpi_DeciCon10,
@@ -445,19 +514,27 @@ def compare_plot(compare, tag, SFRD, save: bool = False, add_WD: bool = False):
         if compare == "SFRD":
             fig.savefig(f"../output/Figures/comparison_plot_{compare}_{tag}_BH.png", dpi=300)
         else:
-            fig.savefig(f"../output/Figures/comparison_plot_{compare}_{SFRD}_BH.png", dpi=300)
+            fig.savefig(f"../output/Figures/comparison_plot_{compare}_{sfrd}_BH.png", dpi=300)
     plt.show()
 
 
-def GWB_uncertainty_plot(upper_SFRD, upper_tag, lower_SFRD, lower_tag, save: bool = True):
+def gwb_uncertainty_plot(upper_sfrd, upper_tag, lower_sfrd, lower_tag, save: bool = True):
+    """! @brief Plot an uncertainty envelope from upper and lower model choices.
+    @param upper_sfrd: sfrd label for the upper spectrum.
+    @param upper_tag: Population tag for the upper spectrum.
+    @param lower_sfrd: sfrd label for the lower spectrum.
+    @param lower_tag: Population tag for the lower spectrum.
+    @param save: Save the figure when true.
+    @return Displays the uncertainty plot and prints the fitted spectral slope.
+    """
 
     fig, ax = plt.subplots(figsize=(8, 6))
     z_list = ["z0001", "z001", "z005", "z01", "z02", "z03"]
     data_upp_accum = None
     data_lower_accum = None
     for z in z_list:
-        path_upp = f"../output/GWBs/SFH6{upper_SFRD}_100_20_{z}_wmerge_{upper_tag}_BH.txt"
-        path_lower = f"../output/GWBs/SFH6{lower_SFRD}_100_20_{z}_wmerge_{lower_tag}_BH.txt"
+        path_upp = f"../output/GWBs/SFH6{upper_sfrd}_100_20_{z}_wmerge_{upper_tag}_BH.txt"
+        path_lower = f"../output/GWBs/SFH6{lower_sfrd}_100_20_{z}_wmerge_{lower_tag}_BH.txt"
         try:
             data_upp = pd.read_csv(path_upp)
             data_lower = pd.read_csv(path_lower)
@@ -481,37 +558,42 @@ def GWB_uncertainty_plot(upper_SFRD, upper_tag, lower_SFRD, lower_tag, save: boo
     print(f"log10(alpha): {coeffs[1]:.3f} ± {alpha_err:.3f}")
 
 
-    a, b, c = calc_parabola_vertex(-3, -12, -2.5, -12.5, -2, -12)
-    get_Omega_LISA = LISA_PI_curve(t_obs=4)
-    get_Omega_ET = ET_PI_curve(t_obs=4)
+    get_omega_lisa = lisa_pi_curve(t_obs=4)
+    get_omega_et = et_pi_curve(t_obs=4)
     logf1_DeciCon10, logpi_DeciCon10 = np.loadtxt(f"../data/DeciCon10.dat").transpose()
 
     log_f_high = 3.5 ; log_f_low = -6
     freq = np.logspace(log_f_low - 0.1, log_f_high + 0.1, 1000)
 
-    ax.plot(freq, Omega(Omega_upp, 25, freq),
+    ax.plot(freq, omega(OMEGA_UPPER, 25, freq),
             linestyle="-", color="#B8D4E8", linewidth=0.9,
             label="LVK Upper Limit", zorder=1)
-    ax.plot(freq, Omega(Omega_BBH, 25, freq),
+    ax.plot(freq, omega(OMEGA_BBH, 25, freq),
             color="#4A7FA8", linewidth=0.9, alpha=0.8,
             label="LVK BBH", zorder=1)
-    ax.plot(freq, Omega(Omega_BNS, 25, freq),
+    ax.plot(freq, omega(OMEGA_BNS, 25, freq),
             color="#1A4F78", linewidth=0.9, alpha=0.8,
             label="LVK BNS", zorder=1)
 
-    ax.plot(data_upp_accum["f"], data_upp_accum["Om"], linewidth=0.3, color="#C0392B", label="_nolegend_")
-    ax.plot(data_lower_accum["f"], data_lower_accum["Om"], linewidth=0.3, color="#C0392B", label="_nolegend_")
+    ax.plot(
+        data_upp_accum["f"], data_upp_accum["Om"], linewidth=0.3,
+        color="#C0392B", label="_nolegend_",
+    )
+    ax.plot(
+        data_lower_accum["f"], data_lower_accum["Om"], linewidth=0.3,
+        color="#C0392B", label="_nolegend_",
+    )
     ax.fill_between(data_upp_accum["f"], data_lower_accum["Om"], data_upp_accum["Om"],
                     color="#C0392B", alpha=0.2, zorder=0, label="Uncertainty range")
-    ax.fill_between(freq, Omega(Omega_BBH_low, 25, freq), Omega(Omega_BBH_up, 25, freq),
+    ax.fill_between(freq, omega(OMEGA_BBH_LOW, 25, freq), omega(OMEGA_BBH_UP, 25, freq),
                     color="#4A7FA8", alpha=0.16, zorder=0)
-    ax.fill_between(freq, Omega(Omega_BNS_low, 25, freq), Omega(Omega_BNS_up, 25, freq),
+    ax.fill_between(freq, omega(OMEGA_BNS_LOW, 25, freq), omega(OMEGA_BNS_UP, 25, freq),
                     color="#1A4F78", alpha=0.16, zorder=0)
 
-    ax.plot(freq, get_Omega_LISA(freq),
+    ax.plot(freq, get_omega_lisa(freq),
             color="#AAAAAA", linewidth=1.0, linestyle=(0, (4, 2, 1, 2)),
             label="LISA", zorder=2)
-    ax.plot(freq, get_Omega_ET(freq),
+    ax.plot(freq, get_omega_et(freq),
             color="#666666", linewidth=1.0, linestyle=(0, (4, 2, 1, 2)),
             label="ET", zorder=2)
     ax.loglog(10**logf1_DeciCon10, 10**logpi_DeciCon10,
@@ -544,6 +626,12 @@ def GWB_uncertainty_plot(upper_SFRD, upper_tag, lower_SFRD, lower_tag, save: boo
     plt.show()
 
 def density_initials(pop_synth, alpha, save: bool = False):
+    """! @brief Plot initial chirp-mass and GW-frequency density by metallicity.
+    @param pop_synth: Population-synthesis model directory name.
+    @param alpha: Alpha model directory name.
+    @param save: Save the figure when true.
+    @return Displays the six-panel density plot.
+    """
     z_dict = {"z0001": "Z = 0.0001", "z001": "Z = 0.001", "z005": "Z = 0.005",
               "z01": "Z = 0.01", "z02": "Z = 0.02", "z03": "Z = 0.03"}
 
@@ -551,7 +639,11 @@ def density_initials(pop_synth, alpha, save: bool = False):
     plt.subplots_adjust(hspace=0, wspace=0)
 
     for ax, (z, z_label) in zip(axes.flat, z_dict.items()):
-        initials = pd.read_csv(f"../data/BH/{pop_synth}/{alpha}/{z}/Initials_{z}.txt.gz", sep=",", header=0)
+        initials = pd.read_csv(
+            f"../data/BH/{pop_synth}/{alpha}/{z}/Initials_{z}.txt.gz",
+            sep=",",
+            header=0,
+        )
         sns.kdeplot(x=np.log10(2*initials.nu0), y=initials.M_ch,
                     fill=True, cmap="Blues", thresh=0.02, levels=15, ax=ax)
         ax.text(0.03, 0.97, z_label, transform=ax.transAxes, fontsize=20, va="top", ha="left")
@@ -571,6 +663,12 @@ def density_initials(pop_synth, alpha, save: bool = False):
 
 
 def density_t0_tau(pop_synth, alpha, save: bool = False):
+    """! @brief Plot formation time versus maximum coalescence time by metallicity.
+    @param pop_synth: Population-synthesis model directory name.
+    @param alpha: Alpha model directory name.
+    @param save: Save the figure when true.
+    @return Displays the six-panel density plot.
+    """
     z_dict = {"z0001": "Z = 0.0001", "z001": "Z = 0.001", "z005": "Z = 0.005",
               "z01": "Z = 0.01", "z02": "Z = 0.02", "z03": "Z = 0.03"}
 
@@ -581,14 +679,24 @@ def density_t0_tau(pop_synth, alpha, save: bool = False):
     plt.subplots_adjust(hspace=0, wspace=0)
 
     for ax, (z, z_label) in zip(axes.flat, z_dict.items()):
-        initials = pd.read_csv(f"../data/BH/{pop_synth}/{alpha}/{z}/Initials_{z}.txt.gz", sep=",", header=0)
+        initials = pd.read_csv(
+            f"../data/BH/{pop_synth}/{alpha}/{z}/Initials_{z}.txt.gz",
+            sep=",",
+            header=0,
+        )
         sns.kdeplot(x=initials.t0, y=np.log10(initials.Dt_max),
                     fill=True, cmap="Reds", thresh=0.02, levels=20, ax=ax)
         for z_hub, ls in hubble_lines.items():
             t_hub = Planck18.age(z_hub).to(u.Myr).value
             valid = t0_range < t_hub
-            ax.plot(t0_range[valid], np.log10(t_hub - t0_range[valid]), color="black", linewidth=0.8,
-                    linestyle=ls, label=f"z = {z_hub}")
+            ax.plot(
+                t0_range[valid],
+                np.log10(t_hub - t0_range[valid]),
+                color="black",
+                linewidth=0.8,
+                linestyle=ls,
+                label=f"z = {z_hub}",
+            )
         ax.set_xlim(0, 20)
         ax.set_ylim(1, 9)
         ax.text(0.03, 0.97, z_label, transform=ax.transAxes, fontsize=20, va="top", ha="left")
@@ -607,6 +715,12 @@ def density_t0_tau(pop_synth, alpha, save: bool = False):
     plt.show()
 
 def density_nu0max(pop_synth, alpha, save: bool = False):
+    """! @brief Plot the distribution of maximum GW frequency by metallicity.
+    @param pop_synth: Population-synthesis model directory name.
+    @param alpha: Alpha model directory name.
+    @param save: Save the figure when true.
+    @return Displays the stacked frequency histogram.
+    """
     z_dict = {"z0001": "Z = 0.0001", "z001": "Z = 0.001", "z005": "Z = 0.005",
               "z01": "Z = 0.01", "z02": "Z = 0.02", "z03": "Z = 0.03"}
 
@@ -619,7 +733,11 @@ def density_nu0max(pop_synth, alpha, save: bool = False):
 
     fig, ax = plt.subplots(figsize=(10, 6))
     for (z, z_label), color in zip(z_dict.items(), colors):
-        initials = pd.read_csv(f"../data/BH/{pop_synth}/{alpha}/{z}/Initials_{z}.txt.gz", sep=",", header=0)
+        initials = pd.read_csv(
+            f"../data/BH/{pop_synth}/{alpha}/{z}/Initials_{z}.txt.gz",
+            sep=",",
+            header=0,
+        )
         counts, _ = np.histogram(np.log10(2 * initials.nu_max), bins=bins)
         ax.bar(bin_centers, counts, width=width, bottom=bottoms,
                color=color, label=z_label, alpha=0.9, linewidth=0)
@@ -636,22 +754,50 @@ def density_nu0max(pop_synth, alpha, save: bool = False):
     plt.show()
 
 def main():
+    """! @brief Run the selected post-processing analyses.
+    @details Uncomment or edit the recipe calls below to choose analyses. The
+    eccentricity recipes use the population loaded here; comparison and density
+    plots load their own result files. Plot functions show figures and can save
+    them using their save argument.
+    """
     data_file = Path(f"../data/BH/GammaAlpha/Alpha4/z02/t0aim1m1e.dat.gz")
     population = pd.read_csv(data_file, names=["t0", "a", "e", "m1", "m2"], sep="\s+")
+
+    # --- Eccentricity diagnostics (use the loaded population) ---
+    # compute_phi_gwb_harmonic: mass-weighted Phi correction by radiative frequency.
+    # n_pole controls harmonics; n_e_steps and n_fr_bins control sampling.
+    #compute_phi_gwb_harmonic(population, n_pole=5, n_e_steps=100, n_fr_bins=50, save_fig=True)
+
+    # phi_curve: show harmonic Phi curves for one initial eccentricity e0.
+    # Use the sample mean below or set e0 to a chosen value; n_pole sets harmonics.
     #mean_e_0 = np.mean(population["e"])
-    #phi_curve(mean_e_0, 5, SAVE_FIG = True)
-    #compute_phi_gwb_harmonic(population, n_pole=5, n_e_steps=100, n_fr_bins=50, SAVE_FIG = True)
-    #eccentricity_cloud(population, SAVE_FIG = True)
-    #compare_plot("tag", "AA4T","MZ19", True, True)
-    #GWB_uncertainty_plot("LZ21", "GA1T", "HZ19", "GA4T", True)
+    #phi_curve(mean_e_0, n_pole=5, save_fig=True)
+
+    # eccentricity_cloud: show eccentricity against orbital/radiative frequency.
+    # n_pole controls harmonics and n_e_steps controls evolution sampling.
+    #eccentricity_cloud(population, n_pole=5, n_e_steps=50, save_fig=True)
+
+    # --- GWB model comparisons (these functions load result files) ---
+    # compare_plot: set compare="SFRD" to compare sfrd models, or "tag" to
+    # compare population tags. tag and sfrd identify the fixed comparison input;
+    # add_wd optionally includes WD results, and save controls figure output.
+    #compare_plot("tag", "AA4T", "MZ19", save=True, add_wd=True)
+
+    # gwb_uncertainty_plot: upper/lower sfrd and tag pairs define the envelope.
+    # save controls whether the uncertainty figure is written to output/Figures.
+    #gwb_uncertainty_plot("LZ21", "GA1T", "HZ19", "GA4T", save=True)
+
+    # --- Initial-population distributions (each function loads its own files) ---
+    # Set these labels to the population-synthesis and alpha directories to use.
     pop_synths = ["GammaAlpha", "AlphaAlpha"]
     alphas = ["Alpha4", "Alpha1"]
+    # density_initials: initial chirp-mass versus GW-frequency density.
+    # density_t0_tau: formation time versus maximum coalescence time.
+    # density_nu0max: stacked distribution of maximum GW frequency.
+    # The final argument enables saving each figure.
     for pop_synth in pop_synths:
         for alpha in alphas:
-            #density_initials(pop_synth, alpha, True)
-            #density_t0_tau(pop_synth, alpha, True)
+            #density_initials(pop_synth, alpha, save=True)
+            #density_t0_tau(pop_synth, alpha, save=True)
             density_nu0max(pop_synth, alpha, True)
-    #density_t0_tau("GammaAlpha", "Alpha4", True)
-    #density_nu0max("GammaAlpha", "Alpha4", True)
-
 main()

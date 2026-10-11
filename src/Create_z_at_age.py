@@ -18,7 +18,10 @@ print("Current dir: " + os.getcwd())
 
 def main() -> None:
     """!
-    @brief Function to create list of z-values at given ages of the Universe.
+    @brief Create a redshift lookup table indexed by the age of the Universe.
+    @details Uses Planck18 cosmology and writes the table to ../data/z_at_age.txt.
+    The maximum redshift and number of interpolation points are set in the
+    settings block below.
     """
 
     # ----- SETTINGS ----- #

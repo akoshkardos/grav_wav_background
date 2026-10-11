@@ -1,6 +1,6 @@
 """!
 @file add_merge.py
-@brief This file contains a routine that adds the contribution of the 'merger bins' due to Kepler max to the bulk+birth GWB.
+@brief This file contains a routine that adds the contribution of the 'merger bins' due to kepler max to the bulk+birth GWB.
 @author Seppe Staelens
 @date 2024-07-24
 """
@@ -8,17 +8,20 @@
 import numpy as np
 import pandas as pd
 from astropy.cosmology import Planck18 as cosmo
-from modules.auxiliary import make_Omega_plot_unnorm, tau_syst, determine_upper_freq
+from modules.auxiliary import make_omega_plot_unnorm, tau_syst, determine_upper_freq
 import modules.SimModel as sm
 from pathlib import Path
 
 
 def add_merge(model: sm.SimModel, data: pd.DataFrame) -> None:
     """!
-    @brief This routine adds the contribution of the 'merger bins' due to Kepler max to the bulk+birth GWB.
+    @brief Add the merger-bin contribution to the bulk and birth GWB.
     @param model: instance of SimModel, containing the necessary information for the run.
     @param data: dataframe containing the binary population data.
-    @return Saves a dataframe that contains the GWB at all freqyencies, and a dataframe that has the breakdown for the different redshift bins.
+    @details Reads the previously saved bulk-plus-birth spectrum, then writes
+    the updated spectrum and merger-bin contribution/count table to
+    model.output_path. Integration mode is selected by model.integ_mode;
+    model.save_fig controls whether a spectrum plot is saved.
     """
 
     print("\nInitiating merger bin part of the code.\n")
@@ -26,18 +29,19 @@ def add_merge(model: sm.SimModel, data: pd.DataFrame) -> None:
     previous_Omega = pd.read_csv(
         Path(
             model.output_path
-            + f"SFH{model.SFH_num}{model.SFH_type}_{model.N_freq}_{model.N_int}_{model.metallicity}_wbirth_{model.tag}_{model.object}.txt"
+            + f"SFH{model.sfh_num}{model.sfh_type}_{model.n_freq}_{model.n_int}_"
+            f"{model.metallicity}_wbirth_{model.tag}_{model.compact_object}.txt"
         ),
         sep=",",
     )
-    Omega_plot = previous_Omega.Om.values.copy()
+    omega_plot = previous_Omega.Om.values.copy()
 
     # Create dataframe to store results
     z_contr = pd.DataFrame({"z": model.z_list})
-    if model.INTEG_MODE == "time":
-        z_contr["T"] = model.T_list
+    if model.integ_mode == "time":
+        z_contr["T"] = model.t_list
 
-    for i in range(model.N_freq):
+    for i in range(model.n_freq):
         z_contr[f"freq_{i}"] = np.zeros_like(model.z_list)
         z_contr[f"freq_{i}_num"] = np.zeros_like(model.z_list)
 
@@ -46,12 +50,12 @@ def add_merge(model: sm.SimModel, data: pd.DataFrame) -> None:
     lowest_bin = model.f_bins[0]
 
     # To check numerics
-    NUM_ERRORS = 0
+    num_errors = 0
 
     # We go over the rows in the data and determine the merger bins, and their contribution
     for index, row in data.iterrows():
 
-        if model.TEST_FOR_ONE and (index > 0):
+        if model.test_for_one and (index > 0):
             break
 
         if index % 1000 == 0:
@@ -82,16 +86,16 @@ def add_merge(model: sm.SimModel, data: pd.DataFrame) -> None:
 
                 if tau >= evolve_time:
                     MERGER_CAN_BE_REACHED = False
-                    if model.TEST_FOR_ONE:
+                    if model.test_for_one:
                         print("Did not reach merger.")
 
                 else:
-                    if model.TEST_FOR_ONE:
+                    if model.test_for_one:
                         print("Reached merger.")
 
-                    # calculate representative SFH at the time of formation
-                    psi = model.sfr_interp.representative_SFH(
-                        model.ages[i].value, Delta_t=tau
+                    # calculate representative sfh at the time of formation
+                    psi = model.sfr_interp.representative_sfh(
+                        model.ages[i].value, delta_t=tau
                     )
 
                     # contributions
@@ -108,10 +112,10 @@ def add_merge(model: sm.SimModel, data: pd.DataFrame) -> None:
 
                 if nu_max_b_ini == -1:
                     # Should not be possible
-                    NUM_ERRORS += 1
+                    num_errors += 1
                     continue
 
-                if model.DEBUG:
+                if model.debug:
                     tolerance = 0.01
                     if nu_max_b_ini > (1 + tolerance) * row.nu_max:
                         # The first means that evolve_time too large, second should be caught in previous part
@@ -141,15 +145,15 @@ def add_merge(model: sm.SimModel, data: pd.DataFrame) -> None:
                     nu_max_b ** (2 / 3) - (low_f_r * (1 + z) / 2) ** (2 / 3)
                 ) / (upp_f_r - low_f_r)
                 tau = tau_syst(2 * row.nu0, low_f_r * (1 + z), row.K)
-                psi = model.sfr_interp.representative_SFH(
-                    model.ages[i].value, Delta_t=tau
+                psi = model.sfr_interp.representative_sfh(
+                    model.ages[i].value, delta_t=tau
                 )
 
                 num_syst = (
                     psi * (evolve_time - tau) * 10**6
                 )  # tau is given in Myr, psi in ... /yr
 
-                if model.DEBUG:
+                if model.debug:
                     np.testing.assert_allclose(
                         evolve_time,
                         tau + tau_syst(low_f_r * (1 + z), 2 * nu_max_b, row.K),
@@ -157,22 +161,22 @@ def add_merge(model: sm.SimModel, data: pd.DataFrame) -> None:
                     )
 
             # contributions
-            Omega_cont = (
+            omega_cont = (
                 model.f_plot[bin_index]
                 * row.M_ch ** (5 / 3)
                 * freq_fac
                 * (1 + z) ** (-1)
                 * psi
             )
-            if model.INTEG_MODE == "redshift":
-                Omega_cont *= (
+            if model.integ_mode == "redshift":
+                omega_cont *= (
                     model.omega_prefactor_birth_merger
                     * (1 + z) ** (-1)
                     * model.z_widths[i]
                 )
 
-            if model.INTEG_MODE == "redshift":
-                z_contr.loc[i, f"freq_{bin_index}"] += Omega_cont / (
+            if model.integ_mode == "redshift":
+                z_contr.loc[i, f"freq_{bin_index}"] += omega_cont / (
                     model.omega_prefactor_bulk * model.f_bin_factors[bin_index]
                 )
                 z_contr.loc[i, f"freq_{bin_index}_num"]+= (
@@ -181,9 +185,9 @@ def add_merge(model: sm.SimModel, data: pd.DataFrame) -> None:
                     * (cosmo.comoving_distance(z).value ** 2)
                     * model.z_widths[i]
                 )
-            elif model.INTEG_MODE == "time":
+            elif model.integ_mode == "time":
                 z_contr.loc[i, f"freq_{bin_index}"] += (
-                    Omega_cont / model.f_bin_factors[bin_index]
+                    omega_cont / model.f_bin_factors[bin_index]
                 )
                 z_contr.loc[i, f"freq_{bin_index}_num"] += (
                     (4 * np.pi / model.normalisation)
@@ -191,41 +195,45 @@ def add_merge(model: sm.SimModel, data: pd.DataFrame) -> None:
                     * (cosmo.comoving_distance(z).value ** 2)
                     * model.light_speed
                     * (1 + z)
-                    * model.dT
+                    * model.dt
                 )
 
-            if model.INTEG_MODE == "time":
-                Omega_cont *= (
-                    model.light_speed * model.omega_prefactor_birth_merger * model.dT
+            if model.integ_mode == "time":
+                omega_cont *= (
+                    model.light_speed * model.omega_prefactor_birth_merger * model.dt
                 )
 
-            Omega_plot[bin_index] += Omega_cont
+            omega_plot[bin_index] += omega_cont
 
-    if model.DEBUG:
-        print(f"Number of numerical errors: {NUM_ERRORS}\n")
+    if model.debug:
+        print(f"Number of numerical errors: {num_errors}\n")
 
     # Plots
-    if model.SAVE_FIG:
-        make_Omega_plot_unnorm(
+    if model.save_fig:
+        make_omega_plot_unnorm(
             model.f_plot,
-            Omega_plot,
-            model.SAVE_FIG,
-            f"GWB_SFH{model.SFH_num}{model.SFH_type}_{model.N_freq}_{model.N_int}_wmerge_{model.tag}_{model.object}"
+            omega_plot,
+            model.save_fig,
+            f"GWB_SFH{model.sfh_num}{model.sfh_type}_{model.n_freq}_{model.n_int}_"
+            f"wmerge_{model.tag}_{model.compact_object}"
         )
 
     # Save GWB
-    GWBnew = pd.DataFrame({"f": model.f_plot, "Om": Omega_plot})
+    GWBnew = pd.DataFrame({"f": model.f_plot, "Om": omega_plot})
     GWBnew.to_csv(
         Path(
             model.output_path
-            + f"SFH{model.SFH_num}{model.SFH_type}_{model.N_freq}_{model.N_int}_{model.metallicity}_wmerge_{model.tag}_{model.object}.txt"
+            + f"SFH{model.sfh_num}{model.sfh_type}_{model.n_freq}_{model.n_int}_"
+            f"{model.metallicity}_wmerge_{model.tag}_{model.compact_object}.txt"
         ),
         index=False,
     )
     z_contr.to_csv(
         Path(
             model.output_path
-            + f"SFH{model.SFH_num}{model.SFH_type}_{model.N_freq}_{model.N_int}_{model.metallicity}_z_contr_merge_{model.tag}_{model.object}.txt"
+            + f"SFH{model.sfh_num}{model.sfh_type}_{model.n_freq}_{model.n_int}_"
+            f"{model.metallicity}_z_contr_merge_{model.tag}_"
+            f"{model.compact_object}.txt"
         ),
         index=False,
     )

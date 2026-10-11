@@ -1,7 +1,7 @@
 """!@file GWB.py
 @date 2024-07-26
-@brief This program calculates the GWB based on the method described in my thesis, using uniform redshift bins.
-@details The program calculates the GWB based on the method described in my thesis, using uniform redshift bins. It is divided into three main parts: the bulk part, the birth part, and the merger part. The bulk part calculates the majority of the GWB, what is referred to in my thesis as the 'generic case'. The birth part adds the contribution of the 'birth bins' to the bulk GWB. The merger part adds the contribution of the 'merger bins' due to Kepler max to the bulk GWB. The program saves a dataframe with all the essential information.
+@brief Calculate the gravitational-wave background from a binary population.
+@details Runs the bulk, birth-bin, and merger-bin contributions using the integration mode selected in the parameter file (redshift or cosmic time), then writes the resulting spectra and contribution tables.
 @author Seppe Staelens
 """
 
@@ -55,21 +55,19 @@ def simulate(metallicity: str) -> None:
     @details The main functions sets the details of the simulation and runs the three main parts of the program.
     @param metallicity: metallicity of the simulation.
     """
-    # create the simulation from the parameter file
     model = sm.SimModel(input_file=param_file, metallicity=metallicity)
     population_file = Path(model.population_file_name)
     if not population_file.exists():
         print(f"File {population_file} does not exist. Skipping.")
         return
-    # population data
     population = pd.read_csv(model.population_file_name, sep=",")
 
     # Some binaries will never make it to our frequency window within a Hubble time
     relevant_population = aux.drop_redundant_binaries(
-        population, model.log_f_low, model.T0
+        population, model.log_f_low, model.max_lookback_time
     )
 
-    if model.TEST_FOR_ONE:
+    if model.test_for_one:
         # info on the first row of data
         print(relevant_population.iloc[0])
 

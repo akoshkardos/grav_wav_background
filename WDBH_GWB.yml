@@ -1,0 +1,17 @@
+name: WDBH_GWB
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - astropy
+  - healpy
+  - matplotlib
+  - numpy<2
+  - pandas
+  - pip
+  - scipy
+  - seaborn
+  - ipykernel
+  - pytest
+  - pip:
+      - schnell==0.2.0

@@ -9,6 +9,7 @@ This package contains all the modules that are used in the project.
 4. auxiliary.py: auxiliary functions used in the project
 5. physics.py: physics functions that are used in SeBa_pre_process.py
 6. RedshiftInterpolator.py: class to interpolate redshifts
-7. SFH.py: contains all the SFH functions
-8. SimModel.py: class that stores all the important parameters of the simulation
+7. SFRInterpolator.py: class to select and evaluate an sfh/sfrd
+8. SFH.py: contains the analytic sfh functions
+9. SimModel.py: class that stores shared simulation parameters and derived values
 """
